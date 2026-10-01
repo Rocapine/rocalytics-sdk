@@ -502,3 +502,37 @@ describe("N2: a stored value of an unknown (future) format", () => {
     expect(await h.tracker.resume()).toBeNull();
   });
 });
+
+describe("B1 follow-up: a write that never settles does not hang the next tracker on the same storage", () => {
+  it("configure() after a hanging write: resume() and idle() still resolve within storageReadTimeoutMs, and the session stops writing", async () => {
+    const time = new ManualTime();
+    const inner = memoryStorage();
+    inner.setItem(KEY, JSON.stringify({ format: 1, current: null, outboxes: {} }));
+    let hang = true;
+    const storage = { ...inner, setItem: (k: string, v: string) => (hang ? new Promise<void>(() => {}) : inner.setItem(k, v)) };
+    const sink = new MemorySink<OnboardingRunSnapshot>();
+    const diagnostics: string[] = [];
+    const cfg = {
+      sink, context: CONTEXT, storage, clock: time.clock, timers: time.timers, debounceMs: 0, persistTimeoutMs: 1000, storageReadTimeoutMs: 1000,
+      onDiagnostic: (d: { code: string }) => diagnostics.push(d.code),
+    };
+    onboardingRun.configure(cfg);
+    const run = onboardingRun.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    run.complete();
+    await time.advance(1000);
+    onboardingRun.configure(cfg); // the second tracker's read queues behind the hanging write
+    hang = false;
+
+    let resumed: unknown = "pending";
+    void onboardingRun.resume().then((r) => (resumed = r));
+    let idled = false;
+    void onboardingRun.idle().then(() => (idled = true));
+    await time.advance(1000);
+    expect(resumed).toBeNull();
+    expect(idled).toBe(true);
+    expect(diagnostics).toContain("storage");
+    expect(sink.received.some((s) => s.status === "completed")).toBe(true);
+    onboardingRun.dispose();
+  });
+});

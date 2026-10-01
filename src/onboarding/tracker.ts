@@ -57,6 +57,13 @@ export interface TrackerConfig {
    * the guarantee. Default 1,000 ms. Ignored without `storage`.
    */
   persistTimeoutMs?: number;
+  /**
+   * The longest `resume()` and `idle()` wait for storage. If the stored state
+   * has not been read by then (a storage that hangs), `resume()` resolves null,
+   * `idle()` resolves, and the session stops writing, so a late read can never
+   * lead to an overwrite. Default 5,000 ms.
+   */
+  storageReadTimeoutMs?: number;
   /** Receives what the tracker declined to do. Default: `console.warn`. */
   onDiagnostic?: DiagnosticHandler;
 }
@@ -236,6 +243,40 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
   }
 
   const persistTimeoutMs = config.persistTimeoutMs ?? 1000;
+  const storageReadTimeoutMs = config.storageReadTimeoutMs ?? 5000;
+
+  /** `p`, or `false` once `ms` have passed without it settling. Never rejects. */
+  const within = <T>(p: Promise<T>, ms: number): Promise<T | false> =>
+    new Promise((resolve) => {
+      const timer = timers.setTimeout(() => resolve(false), ms);
+      p.then(
+        (v) => {
+          timers.clearTimeout(timer);
+          resolve(v);
+        },
+        () => {
+          timers.clearTimeout(timer);
+          resolve(false);
+        },
+      );
+    });
+
+  /**
+   * Waits for the stored state to be read, at most storageReadTimeoutMs. On a
+   * timeout the session stops writing: storage it never read is not overwritten.
+   */
+  const waitLoaded = async (): Promise<boolean> => {
+    if (!store) return true;
+    const ok = await within(loaded.then(() => true), storageReadTimeoutMs);
+    if (!ok && !persistenceOff) {
+      persistenceOff = true;
+      report({
+        code: "storage",
+        message: `the stored state could not be read within ${storageReadTimeoutMs} ms: this session runs without persistence`,
+      });
+    }
+    return ok;
+  };
 
   /**
    * Queues a write of the whole tracker state, in order, right away; its value
@@ -501,7 +542,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
 
     async resume() {
       try {
-        await loaded;
+        if (!(await waitLoaded())) return null;
         if (disposed || startedThisSession || !persistedCurrent) return null;
         const state = persistedCurrent;
         persistedCurrent = null;
@@ -523,11 +564,14 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
 
     async idle() {
       try {
-        await loaded;
-        for (let i = 0; i < 3; i++) {
-          await store?.idle();
-          await Promise.resolve();
-        }
+        if (!store || !(await waitLoaded())) return;
+        const drained = (async () => {
+          for (let i = 0; i < 3; i++) {
+            await store.idle();
+            await Promise.resolve();
+          }
+        })();
+        await within(drained, storageReadTimeoutMs);
       } catch {
         // idle() never rejects into the host
       }
