@@ -19,9 +19,11 @@ export interface ManifestInput {
 }
 
 export interface StudioInput {
-  onboardingId?: string;
-  deploymentId?: string;
-  audienceId?: string;
+  /** Null and undefined both mean absent. */
+  onboardingId?: string | null;
+  /** Null and undefined both mean absent; a Studio-served run with none is a draft. */
+  deploymentId?: string | null;
+  audienceId?: string | null;
   /** A Studio draft or preview: always sent as version `draft`. */
   draft?: boolean;
 }
@@ -105,16 +107,21 @@ export function validateStart(options: StartOptions): { ok: true; value: ValidSt
     if (draft && version !== "draft") warnings.push(["draft-version", `a Studio draft sends version "draft", not "${version}"`]);
     onboarding = { key, version: draft ? "draft" : version };
     if (variantKey !== undefined && variantKey !== null) {
-      if (studioIn) {
+      // Studio-served means it carries a Studio link (or is a Studio draft), not that a `studio` object was passed.
+      if (studio || draft) {
         warnings.push(["studio-variant-dropped", "a Studio-served run does not carry variant_key: each Studio arm is its own onboarding key"]);
       } else if (!isKey(variantKey)) errors.push("onboarding.variantKey must be a key");
       else onboarding.variant_key = variantKey;
     }
   } else if (studioIn && isKey(studioIn.onboardingId)) {
-    const deployment = studioIn.deploymentId;
-    const version = draft || deployment === undefined ? "draft" : deployment;
-    if (!VERSION.test(version)) errors.push("studio.deploymentId cannot be used as onboarding.version");
-    onboarding = { key: studioIn.onboardingId, version };
+    // A null deployment id is absent, as it is for the links above: a Studio-served run with none is a draft (3.1).
+    const deployment: unknown = studioIn.deploymentId;
+    const version = draft || deployment === undefined || deployment === null ? "draft" : deployment;
+    if (typeof version !== "string" || !VERSION.test(version)) {
+      errors.push("studio.deploymentId cannot be used as onboarding.version");
+    } else {
+      onboarding = { key: studioIn.onboardingId, version };
+    }
   } else {
     errors.push("either onboarding { key, version } or studio.onboardingId is required");
   }
@@ -177,7 +184,7 @@ export function mergeProperties(base: Properties, patch: unknown): { value: Prop
       problems.push(["invalid-property", problem]);
       continue;
     }
-    if (!(k in value) && Object.keys(value).length >= MAX_PROPERTIES) {
+    if (!Object.prototype.hasOwnProperty.call(value, k) && Object.keys(value).length >= MAX_PROPERTIES) {
       problems.push(["too-many-properties", `property "${k}" dropped: at most ${MAX_PROPERTIES}`]);
       continue;
     }
