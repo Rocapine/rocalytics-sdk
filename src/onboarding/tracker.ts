@@ -8,6 +8,7 @@ import { systemClock, systemTimers, type Clock, type Timers } from "../core/time
 import { LIBRARY_VERSION } from "../version";
 import type { OnboardingRunSnapshot, Properties } from "./contract";
 import { mergeProperties, toAnswer, validateStart, type AnswerInput, type StartOptions } from "./input";
+import { parsePersisted, type Persisted } from "./persisted";
 import {
   completeState,
   enter,
@@ -85,12 +86,6 @@ export interface OnboardingRunTracker {
   dispose(): void;
 }
 
-interface Persisted {
-  format: 1;
-  current: RunState | null;
-  outboxes: Record<string, Outbound<OnboardingRunSnapshot>>;
-}
-
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const NOTE_MESSAGES: Record<Note, string> = {
   truncated: "the run reached a recording limit (500 entries or 261,120 bytes): recording has stopped",
@@ -115,10 +110,13 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
   const report = safeDiagnostics(config.onDiagnostic);
   const fallbackUuid = createUuid(clock);
   const debounceMs = config.debounceMs ?? 500;
-  const store: SerialStore<Persisted> | null = config.storage
-    ? createSerialStore<Persisted>(config.storage, config.storageKey ?? "studio-sdk:onboarding-run", (e) =>
-        report({ code: "storage", message: `storage failed: ${String(e)}` }),
-      )
+  // Set when storage held something unusable, so the first write replaces it.
+  let rewrite = false;
+  const store: SerialStore<unknown> | null = config.storage
+    ? createSerialStore<unknown>(config.storage, config.storageKey ?? "studio-sdk:onboarding-run", (e) => {
+        rewrite = true;
+        report({ code: "storage", message: `storage failed: ${String(e)}` });
+      })
     : null;
 
   const deliveries = new Map<string, Delivery<OnboardingRunSnapshot>>();
@@ -146,21 +144,34 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
 
   // Persisted outboxes are merged in before anything is written, so a write
   // composed this session never drops a snapshot left by the previous one.
+  // Every stored part is validated first; an invalid one is dropped, reported,
+  // and the stored value rewritten without it. This promise never rejects.
   const loaded: Promise<void> = store
-    ? store.load().then((p) => {
-        if (p !== null && (typeof p !== "object" || p.format !== 1)) {
-          report({ code: "storage", message: "unrecognised stored state: ignored" });
-          return;
-        }
-        if (!p) return;
-        for (const [runId, item] of Object.entries(p.outboxes ?? {})) {
-          if (!outboxes.has(runId) && !disposed) deliveryFor(runId).enqueue(item);
-        }
-        if (p.current && p.current.status === "in_progress") {
-          if (!live) persistedCurrent = p.current;
-          else sendAbandoned(p.current); // a new run started before storage was read
-        }
-      })
+    ? store
+        .load()
+        .then((raw) => {
+          if (raw === null) return;
+          const { current, outboxes: stored, problems } = parsePersisted(raw);
+          if (problems.length) {
+            rewrite = true;
+            report({ code: "storage", message: `${problems.join("; ")}: discarded` });
+          }
+          for (const [runId, item] of stored) {
+            if (!outboxes.has(runId) && !disposed) deliveryFor(runId).enqueue(item);
+          }
+          if (current && current.status === "in_progress") {
+            if (!live) persistedCurrent = current;
+            else sendAbandoned(current); // a new run started before storage was read
+          }
+        })
+        .catch((e) => {
+          rewrite = true;
+          report({ code: "storage", message: `reading stored state failed: ${String(e)}` });
+        })
+        .then(() => {
+          if (rewrite && store && !disposed) store.save(compose());
+          rewrite = false;
+        })
     : Promise.resolve();
 
   /**
@@ -176,9 +187,11 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
 
   const persist = () => {
     if (!store || disposed) return;
-    void loaded.then(() => {
-      if (!disposed) store.save(compose());
-    });
+    loaded
+      .then(() => {
+        if (!disposed) store.save(compose());
+      })
+      .catch((e) => report({ code: "storage", message: `saving failed: ${String(e)}` }));
   };
 
   function deliveryFor(runId: string): Delivery<OnboardingRunSnapshot> {
@@ -414,10 +427,14 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
     },
 
     async idle() {
-      await loaded;
-      for (let i = 0; i < 3; i++) {
-        await store?.idle();
-        await Promise.resolve();
+      try {
+        await loaded;
+        for (let i = 0; i < 3; i++) {
+          await store?.idle();
+          await Promise.resolve();
+        }
+      } catch {
+        // idle() never rejects into the host
       }
     },
 
