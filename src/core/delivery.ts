@@ -40,6 +40,12 @@ export interface Delivery<T> {
   pending(): Outbound<T> | null;
   /** Stops all timers. The pending snapshot is kept. */
   stop(): void;
+  /**
+   * Winds down: skips any backoff to give the pending snapshot (and any
+   * handed over later) one last attempt each, and never schedules a retry.
+   * A snapshot that still fails stays pending, so it is not lost.
+   */
+  close(): void;
 }
 
 /**
@@ -65,6 +71,7 @@ export function createDelivery<T>(options: DeliveryOptions<T>): Delivery<T> {
   let failures = 0;
   let retryTimer: unknown = null;
   let stopped = false;
+  let closed = false;
 
   const safe = (fn: () => void) => {
     try {
@@ -107,6 +114,11 @@ export function createDelivery<T>(options: DeliveryOptions<T>): Delivery<T> {
     void callSink(item).then((result) => {
       inFlight = null;
       if (result.outcome === "transient") {
+        if (closed) {
+          // No retry after close; a newer snapshot handed over meanwhile still gets its one attempt.
+          if (pending && pending.seq > item.seq) attempt();
+          return;
+        }
         failures += 1;
         const delay = Math.min(max, initial * Math.pow(factor, failures - 1));
         if (!stopped) retryTimer = timers.setTimeout(() => {
@@ -138,6 +150,12 @@ export function createDelivery<T>(options: DeliveryOptions<T>): Delivery<T> {
     stop() {
       stopped = true;
       clearRetry();
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      clearRetry();
+      attempt();
     },
   };
 }

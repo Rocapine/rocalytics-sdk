@@ -226,3 +226,62 @@ describe("createDelivery", () => {
     expect(delivery.pending()?.seq).toBe(1); // kept, still to be retried
   });
 });
+
+describe("createDelivery: close()", () => {
+  it("makes one last attempt for the pending snapshot, then schedules no retry", async () => {
+    const time = new ManualTime();
+    const sink = new MemorySink();
+    sink.respond = () => ({ outcome: "transient" });
+    const delivery = createDelivery({ sink, timers: time.timers, retry: { initialDelayMs: 1000 } });
+    delivery.enqueue({ seq: 1, body: { seq: 1 } });
+    await time.advance(0);
+    expect(sink.received).toHaveLength(1);
+    delivery.close();
+    await time.advance(0);
+    expect(sink.received).toHaveLength(2); // the backoff is skipped once
+    await time.advance(60_000);
+    expect(sink.received).toHaveLength(2);
+    expect(time.pendingTimers).toBe(0);
+    delivery.enqueue({ seq: 2, body: { seq: 2 } }); // a snapshot handed over after close still gets its one attempt
+    await time.advance(0);
+    expect(sink.received.map((b) => (b as { seq: number }).seq)).toEqual([1, 1, 2]);
+    expect(delivery.pending()?.seq).toBe(2); // kept, never dropped
+  });
+});
+
+describe("createSerialStore: read() and the shared queue", () => {
+  it("tells a failed read from an unparseable value, and retries a failed read once", async () => {
+    const ok = memoryStorage();
+    ok.setItem("k", '{"a":1}');
+    expect(await createSerialStore(ok, "k", () => {}).read()).toEqual({ status: "ok", value: { a: 1 } });
+    const bad = memoryStorage();
+    bad.setItem("k", "{nope");
+    expect((await createSerialStore(bad, "k", () => {}).read()).status).toBe("invalid");
+    let fails = 1;
+    const flaky = { ...ok, getItem: (k: string) => (fails-- > 0 ? Promise.reject(new Error("x")) : ok.getItem(k)) };
+    expect(await createSerialStore(flaky, "k", () => {}).read()).toEqual({ status: "ok", value: { a: 1 } });
+    fails = 2;
+    expect((await createSerialStore(flaky, "k", () => {}).read()).status).toBe("failed");
+  });
+
+  it("two stores on the same storage and key share one queue: a later store's read sees an earlier store's writes", async () => {
+    const storage = memoryStorage();
+    const slow = { ...storage, setItem: (k: string, v: string) => new Promise<void>((r) => setTimeout(() => { storage.setItem(k, v); r(); }, 5)) };
+    const first = createSerialStore<{ n: number }>(slow, "k", () => {});
+    first.save({ n: 1 });
+    const second = createSerialStore<{ n: number }>(slow, "k", () => {});
+    expect(await second.read()).toEqual({ status: "ok", value: { n: 1 } });
+  });
+
+  it("saveWith() computes the value when its turn comes, and skips the write on undefined", async () => {
+    const storage = memoryStorage();
+    const store = createSerialStore<{ n: number }>(storage, "k", () => {});
+    let n = 1;
+    const done = store.saveWith(() => ({ n }));
+    n = 2;
+    await done;
+    expect(storage.dump().k).toBe('{"n":2}');
+    await store.saveWith(() => undefined);
+    expect(storage.dump().k).toBe('{"n":2}');
+  });
+});
