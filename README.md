@@ -108,14 +108,17 @@ That run produces one payload per send. The completed one lists `welcome`, `goal
 |---|---|---|
 | `sink` | required | Where snapshots go. `createHttpSink({ url, headers?, timeoutMs? })`, or your own `Sink`. |
 | `context` | required | `{ appVersion, build, platform, osVersion, locale, timezone }`, or a function returning it. Read once per run, at start. There is no country field: the server derives it. |
-| `storage` | none | A key-value store shaped like AsyncStorage or `localStorage`. Without it, nothing survives a restart. |
+| `storage` | none | A key-value store shaped like AsyncStorage or `localStorage`. Without it, nothing survives a restart. If it cannot be read (after one retry), or holds a format this version does not know, it is left untouched and the session runs without persistence. |
 | `storageKey` | `studio-sdk:onboarding-run` | One restorable run per key. |
-| `debounceMs` | `500` | Changes within this window go out as one send. `complete()` and `background()` send at once. |
+| `debounceMs` | `500` | Changes within this window go out as one send. `complete()` and `background()` skip the debounce. |
+| `persistTimeoutMs` | `1000` | With `storage`, every snapshot (completion and background included) is written before it is sent, waiting at most this long for the write. |
 | `retry` | `1000 ms × 2, ≤ 60 s` | Backoff between retries of a transient failure. |
 | `onDiagnostic` | `console.warn` | Receives what the tracker declined to do, as `{ code, message, runId? }`. |
 | `clock`, `timers`, `uuid` | system | Injected for tests. `uuid` must return a lowercase UUID; the default is UUIDv7. |
 
 `createOnboardingRunTracker(config)` returns an independent tracker with the same methods, for tests or for two flows at once.
+
+`dispose()` (which `configure()` calls on the tracker it replaces) stops recording, but loses nothing already recorded. A change still waiting on the debounce is sent, writes already queued still land, and each unsent snapshot gets one last attempt. One the sink does not take stays in storage for the next launch.
 
 ### `onboardingRun.start(options): OnboardingRun`
 
@@ -141,7 +144,7 @@ onboardingRun.start({
 | `exitStep(stepKey, { answers? })` | The user leaves the screen. Answers are `{ questionKey, kind: "single" \| "multi" \| "numeric" \| "text", value, unit? }`, and values are stable option keys, never displayed labels. It is fine if this arrives just after the next screen's `enterStep`. |
 | `setProperties(properties)` | Adds or changes run properties. |
 | `complete()` | The onboarding is finished. This is final: the run records nothing afterwards, and a completed run is never overwritten. |
-| `background()` | The app moved to the background. Records the moment and sends at once. |
+| `background()` | The app moved to the background. Records the moment and sends without waiting for the debounce. |
 | `runId`, `currentStepKey` | The run's id, and the step of its last **recorded** entry. In a truncated run, recording stopped, so this can be an earlier screen than the one the user was on. Do not navigate to it blindly: restore the position from your own navigation state. |
 
 **There is no skip call.** Report only the screens the user was shown. A declared step with no entry counts as skipped when the run reached a later position or completed, and that is worked out when the funnel is read.

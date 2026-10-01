@@ -102,7 +102,12 @@ export interface OnboardingRunTracker {
   resume(): Promise<OnboardingRun | null>;
   /** Resolves once queued storage writes are done. */
   idle(): Promise<void>;
-  /** Stops all timers. The tracker records and sends nothing afterwards. */
+  /**
+   * Stops recording; loses nothing already recorded. A change on the debounce
+   * is sent, writes already queued land, and each unsent snapshot gets one
+   * last attempt (no retry timers). One the sink does not take stays in
+   * storage for the next launch. Safe to call twice.
+   */
   dispose(): void;
 }
 
