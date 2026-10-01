@@ -156,9 +156,23 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
         for (const [runId, item] of Object.entries(p.outboxes ?? {})) {
           if (!outboxes.has(runId) && !disposed) deliveryFor(runId).enqueue(item);
         }
-        if (!live && p.current && p.current.status === "in_progress") persistedCurrent = p.current;
+        if (p.current && p.current.status === "in_progress") {
+          if (!live) persistedCurrent = p.current;
+          else sendAbandoned(p.current); // a new run started before storage was read
+        }
       })
     : Promise.resolve();
+
+  /**
+   * A run left in progress by the previous launch and not resumed: if it holds
+   * a change that never went into a send (killed inside the debounce window),
+   * send it now, so the latest snapshot is not lost (section 5).
+   */
+  function sendAbandoned(state: RunState) {
+    if (disposed || !state.dirty || state.steps.length === 0) return;
+    const seq = state.lastSeq + 1;
+    deliveryFor(state.runId).enqueue({ seq, body: toSnapshot(state, seq, Math.max(clock.now(), floorMs(state))) });
+  }
 
   const persist = () => {
     if (!store || disposed) return;
@@ -235,7 +249,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
 
     private apply(result: Result, send: "debounced" | "now") {
       for (const note of result.notes) this.diag(note, NOTE_MESSAGES[note]);
-      this.state = result.state;
+      this.state = result.changed ? { ...result.state, dirty: true } : result.state;
       persist();
       if (!result.changed) return;
       if (send === "now" || debounceMs <= 0) this.sendNow();
@@ -253,6 +267,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
         ...this.state,
         lastSeq: seq,
         lastActiveAt: this.state.status === "in_progress" ? now : this.state.lastActiveAt,
+        dirty: false,
       };
       persist();
       deliveryFor(this.state.runId).enqueue({ seq, body });
@@ -350,6 +365,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
           report({ code: "run-replaced", runId: live.runId, message: "a new run was started; the previous one stays in progress" });
           live.deactivate();
         }
+        if (persistedCurrent) sendAbandoned(persistedCurrent);
         persistedCurrent = null;
         const { onboarding, studio, manifest, properties } = valid.value;
         const state: RunState = {

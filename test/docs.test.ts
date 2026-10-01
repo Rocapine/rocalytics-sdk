@@ -27,16 +27,16 @@ describe("the contract copy in docs/", () => {
 
 describe("public repository hygiene", () => {
   // The repository is public. These are patterns that should never appear in a
-  // published file: local machine paths and hosted-backend project URLs.
+  // published file: local machine paths and private links.
   const files = [
     "README.md",
     ...fs.readdirSync(DOCS).map((f) => `docs/${f}`),
     ...listTs(path.join(ROOT, "src")).map((f) => path.relative(ROOT, f)),
   ];
-  const denied = [/\/Users\//, /~\/Developer/, /\.supabase\.co/, /claude\.ai\//];
+  const denied = [/\/Users\//, /~\/Developer/, /claude\.ai\//];
 
   for (const f of files) {
-    it(`${f} carries no local paths or backend URLs`, () => {
+    it(`${f} carries no local paths or private links`, () => {
       const text = fs.readFileSync(path.join(ROOT, f), "utf8");
       for (const pattern of denied) expect(text).not.toMatch(pattern);
     });

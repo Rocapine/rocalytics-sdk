@@ -176,6 +176,42 @@ describe("resume after relaunch (3.2)", () => {
     expect(resumed!.runId).toBe(fresh.runId);
   });
 
+  it("a change still inside the debounce window when the app is killed reaches the server even if the run is not resumed", async () => {
+    for (const startBeforeLoad of [false, true]) {
+      const a = harness({ debounceMs: 5000 });
+      const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+      run.enterStep("welcome");
+      run.background(); // sent: welcome only
+      await a.tick(1000);
+      run.enterStep("goal"); // waiting on the debounce when the app dies
+      await a.tick(1000);
+      expect(a.sink.received.map((s) => s.steps.length)).toEqual([1]);
+      await kill(a);
+
+      const b = relaunch(a, 600, { debounceMs: 5000 });
+      if (!startBeforeLoad) await b.tracker.idle();
+      b.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST }); // not resumed: abandoned
+      await b.tick(0);
+      const ofOld = b.sink.received.filter((s) => s.run_id === run.runId);
+      expect(ofOld.map((s) => s.steps.map((e) => e.step_key)), `start before load: ${startBeforeLoad}`).toEqual([["welcome", "goal"]]);
+      expect(ofOld[0].seq).toBe(a.sink.last!.seq + 1);
+      expect(ofOld[0].status).toBe("in_progress");
+    }
+  });
+
+  it("an abandoned run with nothing unsent is not sent again", async () => {
+    const a = harness();
+    const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    await a.tick();
+    await kill(a);
+    const b = relaunch(a, 600);
+    await b.tracker.idle();
+    b.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    await b.tick(60_000);
+    expect(b.sink.received.filter((s) => s.run_id === run.runId)).toEqual([]);
+  });
+
   it("with no storage, or unreadable storage, there is nothing to resume and nothing throws", async () => {
     const none = harness({ storage: undefined });
     expect(await none.tracker.resume()).toBeNull();

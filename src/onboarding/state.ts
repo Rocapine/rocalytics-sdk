@@ -43,6 +43,8 @@ export interface RunState {
   completedAt: string | null;
   /** Last moment the app was known to be in the foreground on the current screen (3.2). Epoch ms. */
   lastActiveAt: number;
+  /** A recorded change has not gone into a send yet (it is waiting on the debounce). */
+  dirty?: boolean;
 }
 
 /** What an operation did, for the tracker to report. */
