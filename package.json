@@ -47,6 +47,7 @@
   ],
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json",
+    "prepack": "npm run build",
     "type:check": "tsc -p tsconfig.json --noEmit",
     "type:check:tests": "tsc -p tsconfig.test.json",
     "lint": "eslint .",

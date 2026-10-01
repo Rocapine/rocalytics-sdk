@@ -65,7 +65,12 @@ export interface ExitOptions {
 export interface OnboardingRun {
   /** Lowercase UUID, minted when the run starts. */
   readonly runId: string;
-  /** The step of the latest entry: the screen to show when resuming. Null before the first step. */
+  /**
+   * The step of the last RECORDED entry; null before the first step. In a
+   * truncated run recording has stopped, so this can be an earlier screen than
+   * the one the user was on: restore the position from the app's own
+   * navigation state, not from this.
+   */
   readonly currentStepKey: string | null;
   /** A screen is shown. Call it again for the same step after going back to it. */
   enterStep(stepKey: string): void;
@@ -85,7 +90,9 @@ export interface OnboardingRunTracker {
   /**
    * Resumes the run that was in progress when the app was killed, or resolves
    * null. Call it only when the app restores the user's position; otherwise
-   * call `start`.
+   * call `start`. The restored screen is recorded as a new entry for the last
+   * recorded step. A truncated run is still returned (so it can complete) but
+   * records no new entry. Null once a run was started this session.
    */
   resume(): Promise<OnboardingRun | null>;
   /** Resolves once queued storage writes are done. */

@@ -49,7 +49,9 @@ export function setUpTracking(storage: KeyValueStorage, device: { appVersion: st
 //    the user's position, otherwise start a new one.
 export async function openOnboarding(restorePosition: boolean): Promise<OnboardingRun> {
   const resumed = restorePosition ? await onboardingRun.resume() : null;
-  if (resumed) return resumed; // navigate to resumed.currentStepKey
+  // Resumed: show the screen your own navigation state restored. The tracker
+  // records it as a new entry for its last recorded step (none if truncated).
+  if (resumed) return resumed;
   return onboardingRun.start({
     onboarding: { key: "main", version: "3" },
     // Every screen the flow can show, in order. Alternatives at one position share a slot.
@@ -140,7 +142,7 @@ onboardingRun.start({
 | `setProperties(properties)` | Adds or changes run properties. |
 | `complete()` | The onboarding is finished. This is final: the run records nothing afterwards, and a completed run is never overwritten. |
 | `background()` | The app moved to the background. Records the moment and sends at once. |
-| `runId`, `currentStepKey` | The run's id, and the step to show when resuming. |
+| `runId`, `currentStepKey` | The run's id, and the step of its last **recorded** entry. In a truncated run, recording stopped, so this can be an earlier screen than the one the user was on. Do not navigate to it blindly: restore the position from your own navigation state. |
 
 **There is no skip call.** Report only the screens the user was shown. A declared step with no entry counts as skipped when the run reached a later position or completed, and that is worked out when the funnel is read.
 
@@ -150,8 +152,10 @@ No method throws. Anything the tracker declines to do is reported through `onDia
 
 After the app was killed mid-onboarding, `resume()` returns the run that was in progress, if the app restores the user's position. The run keeps its `run_id` and continues its `seq`. The tracker:
 
-1. closes the screen the user was on at the last moment the app was known to be in the foreground;
-2. appends a new entry for the restored screen.
+1. closes the screen the user was on, at the last moment the app was known to be in the foreground on it, or at its `exitStep` if that came later;
+2. appends a new entry for the restored screen, using the step of the last recorded entry.
+
+The tracker assumes the app restores the screen of the last recorded entry. **A truncated run** (one that hit a recording limit) has stopped recording: `resume()` still returns it, so it can be completed, but it appends no entry, and its `currentStepKey` is the last screen recorded before the limit, not necessarily the one the user was on.
 
 If the app does not restore the position, call `start()` instead.
 
@@ -176,6 +180,8 @@ const sink: Sink<OnboardingRunSnapshot> = {
 ```
 
 A sink that throws, or returns anything else, counts as transient.
+
+The tracker sends one snapshot of a run at a time, and treats a send with no answer after `attemptTimeoutMs` (30 s) as transient. The stock HTTP sink gives up after 15 s, so its sends never overlap. A custom sink that keeps a request alive past `attemptTimeoutMs` can see a retry start while the first attempt is still running. The two carry the same `seq` and the same body, so the ingest ignores the duplicate.
 
 ## Limits
 

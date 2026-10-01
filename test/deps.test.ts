@@ -44,4 +44,8 @@ describe("dependencies", () => {
   it("exports exactly the shipped subpaths: /onboarding and /core", () => {
     expect(Object.keys(pkg.exports).sort()).toEqual(["./core", "./onboarding", "./package.json"]);
   });
+
+  it("packing (npm pack / npm publish) builds dist first, so a clean checkout cannot ship without it", () => {
+    expect(pkg.scripts.prepack).toBe("npm run build");
+  });
 });

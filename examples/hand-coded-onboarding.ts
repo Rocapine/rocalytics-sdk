@@ -23,7 +23,9 @@ export function setUpTracking(storage: KeyValueStorage, device: { appVersion: st
 //    the user's position, otherwise start a new one.
 export async function openOnboarding(restorePosition: boolean): Promise<OnboardingRun> {
   const resumed = restorePosition ? await onboardingRun.resume() : null;
-  if (resumed) return resumed; // navigate to resumed.currentStepKey
+  // Resumed: show the screen your own navigation state restored. The tracker
+  // records it as a new entry for its last recorded step (none if truncated).
+  if (resumed) return resumed;
   return onboardingRun.start({
     onboarding: { key: "main", version: "3" },
     // Every screen the flow can show, in order. Alternatives at one position share a slot.
