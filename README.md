@@ -112,13 +112,20 @@ That run produces one payload per send. The completed one lists `welcome`, `goal
 | `storageKey` | `studio-sdk:onboarding-run` | One restorable run per key. |
 | `debounceMs` | `500` | Changes within this window go out as one send. `complete()` and `background()` skip the debounce. |
 | `persistTimeoutMs` | `1000` | With `storage`, every snapshot (completion and background included) is written before it is sent, waiting at most this long for the write. |
+| `storageReadTimeoutMs` | `5000` | The longest `resume()` and `idle()` wait for storage. Past it, `resume()` resolves null and the session runs without persistence. |
 | `retry` | `1000 ms × 2, ≤ 60 s` | Backoff between retries of a transient failure. |
 | `onDiagnostic` | `console.warn` | Receives what the tracker declined to do, as `{ code, message, runId? }`. |
 | `clock`, `timers`, `uuid` | system | Injected for tests. `uuid` must return a lowercase UUID; the default is UUIDv7. |
 
 `createOnboardingRunTracker(config)` returns an independent tracker with the same methods, for tests or for two flows at once.
 
-`dispose()` (which `configure()` calls on the tracker it replaces) stops recording, but loses nothing already recorded. A change still waiting on the debounce is sent, writes already queued still land, and each unsent snapshot gets one last attempt. One the sink does not take stays in storage for the next launch.
+`dispose()` (which `configure()` calls on the tracker it replaces) stops recording. What was already recorded is not dropped:
+
+- a change still waiting on the debounce is sent;
+- writes already queued still land;
+- each unsent snapshot gets one last attempt.
+
+A snapshot the sink does not take then stays in storage for the next launch, **when storage is configured and working**. Without storage, with persistence off for the session, or with a write that never finishes, a last attempt that fails is lost. After a reconfigure, the new tracker may send that completion again, with the same `seq` and body, which the ingest ignores.
 
 ### `onboardingRun.start(options): OnboardingRun`
 
