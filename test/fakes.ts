@@ -3,7 +3,7 @@
 // and lets pending promises settle in between.
 import type { Sink, SinkResult } from "../src/core";
 
-export const flushMicrotasks = async (rounds = 20) => {
+export const flushMicrotasks = async (rounds = 200) => {
   for (let i = 0; i < rounds; i++) await Promise.resolve();
 };
 

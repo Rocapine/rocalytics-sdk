@@ -44,6 +44,14 @@ export interface TrackerConfig {
   retry?: RetryPolicy;
   /** A send with no answer after this long is retried. Default 30,000 ms. */
   attemptTimeoutMs?: number;
+  /**
+   * Each snapshot is stored (with its seq) before it is handed to the sink, so
+   * a kill in between can never make a resumed run reuse that seq for a
+   * different body. A storage slower than this does not hold the send back any
+   * longer: it goes out anyway, and only then can a kill in that window cost
+   * the guarantee. Default 1,000 ms. Ignored without `storage`.
+   */
+  persistTimeoutMs?: number;
   /** Receives what the tracker declined to do. Default: `console.warn`. */
   onDiagnostic?: DiagnosticHandler;
 }
@@ -182,17 +190,47 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
   function sendAbandoned(state: RunState) {
     if (disposed || !state.dirty || state.steps.length === 0) return;
     const seq = state.lastSeq + 1;
-    deliveryFor(state.runId).enqueue({ seq, body: toSnapshot(state, seq, Math.max(clock.now(), floorMs(state))) });
+    stageAndSend(state.runId, { seq, body: toSnapshot(state, seq, Math.max(clock.now(), floorMs(state))) }, false);
   }
 
-  const persist = () => {
-    if (!store || disposed) return;
-    loaded
+  const persistTimeoutMs = config.persistTimeoutMs ?? 1000;
+
+  /** Queues a write of the whole tracker state. Never rejects; resolves once the write is done (or failed). */
+  const persist = (): Promise<void> => {
+    if (!store || disposed) return Promise.resolve();
+    return loaded
       .then(() => {
-        if (!disposed) store.save(compose());
+        if (disposed) return;
+        store.save(compose());
+        return store.idle();
       })
       .catch((e) => report({ code: "storage", message: `saving failed: ${String(e)}` }));
   };
+
+  /**
+   * Stores a snapshot as the run's unsent one, together with the state that
+   * assigned its seq, and only then hands it to the sink (3.2: persist on
+   * every change). Waits at most `persistTimeoutMs` for the write.
+   */
+  function stageAndSend(runId: string, item: Outbound<OnboardingRunSnapshot>, flush: boolean) {
+    outboxes.set(runId, item);
+    const send = () => {
+      if (disposed) return;
+      const d = deliveryFor(runId);
+      d.enqueue(item);
+      if (flush) d.flush();
+    };
+    if (!store) return send();
+    let done = false;
+    const once = () => {
+      if (done) return;
+      done = true;
+      timers.clearTimeout(timer);
+      send();
+    };
+    const timer = timers.setTimeout(once, persistTimeoutMs);
+    void persist().then(once);
+  }
 
   function deliveryFor(runId: string): Delivery<OnboardingRunSnapshot> {
     let d = deliveries.get(runId);
@@ -203,11 +241,18 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
         retry: config.retry,
         attemptTimeoutMs: config.attemptTimeoutMs,
         onPendingChange: (pending) => {
-          if (pending) outboxes.set(runId, pending);
-          else outboxes.delete(runId);
-          persist();
+          // Only ever moves forward: a newer snapshot may already be staged for this run.
+          if (pending && (outboxes.get(runId)?.seq ?? 0) <= pending.seq) {
+            outboxes.set(runId, pending);
+            persist();
+          }
         },
         onSettled: (item, result) => {
+          const staged = outboxes.get(runId);
+          if (staged && staged.seq <= item.seq) {
+            outboxes.delete(runId);
+            persist();
+          }
           if (result.outcome === "rejected") {
             report({
               code: "rejected",
@@ -269,7 +314,8 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
       else if (this.debounce === null) this.debounce = timers.setTimeout(() => this.sendNow(), debounceMs);
     }
 
-    sendNow() {
+    /** Sends the run now. `flush` also skips a backoff in progress (completion, background). */
+    sendNow(flush = false) {
       if (this.debounce !== null) timers.clearTimeout(this.debounce);
       this.debounce = null;
       if (disposed || this.state.steps.length === 0) return;
@@ -282,8 +328,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
         lastActiveAt: this.state.status === "in_progress" ? now : this.state.lastActiveAt,
         dirty: false,
       };
-      persist();
-      deliveryFor(this.state.runId).enqueue({ seq, body });
+      stageAndSend(this.state.runId, { seq, body }, flush);
     }
 
     deactivate() {
@@ -338,8 +383,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
         if (this.state.steps.length === 0) return this.diag("no-steps", "complete: no step was entered, so there is no run to send");
         this.state = completeState(this.state, this.now());
         if (live === this) live = null;
-        this.sendNow();
-        deliveryFor(this.state.runId).flush();
+        this.sendNow(true);
       });
     }
 
@@ -348,8 +392,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
         if (this.state.status === "completed") return deliveryFor(this.state.runId).flush();
         if (this.state.steps.length === 0) return this.diag("no-steps", "background: no step was entered yet");
         this.state = { ...this.state, lastActiveAt: this.now() };
-        this.sendNow();
-        deliveryFor(this.state.runId).flush();
+        this.sendNow(true);
       }, true);
     }
   }

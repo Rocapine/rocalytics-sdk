@@ -2,7 +2,8 @@
 // describe block per finding (F1 to F7), so each fix is pinned by name.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { memoryStorage } from "../src/core";
-import type { StartOptions } from "../src/onboarding";
+import type { OnboardingRunSnapshot, StartOptions } from "../src/onboarding";
+import { ManualTime, flushMicrotasks } from "./fakes";
 import { IDENTITY, MANIFEST, harness } from "./harness";
 
 const KEY = "studio-sdk:onboarding-run";
@@ -153,6 +154,95 @@ describe("F2: malformed stored state", () => {
     await h.tick();
     await new Promise((r) => setTimeout(r, 0));
     expect(rejections).toEqual([]);
+    expect(h.sink.received).toHaveLength(1);
+  });
+});
+
+describe("F3: the seq is persisted before the snapshot is handed to the sink", () => {
+  /** A storage whose writes can be held (never landing, as when the app dies first), or that runs a hook as each lands. */
+  function gatedStorage() {
+    const inner = memoryStorage();
+    const gate = { hold: false, onWrite: null as null | (() => void) };
+    const storage = {
+      ...inner,
+      setItem(k: string, v: string) {
+        if (gate.hold) return new Promise<void>(() => {});
+        inner.setItem(k, v);
+        gate.onWrite?.();
+      },
+    };
+    return { storage, inner, gate };
+  }
+
+  /** Over both launches, one seq never carries two different bodies (the server would keep the first). */
+  function expectNoSeqReuse(...bodies: OnboardingRunSnapshot[][]) {
+    const bySeq = new Map<string, string>();
+    for (const body of bodies.flat()) {
+      const k = `${body.run_id}:${body.seq}`;
+      const text = JSON.stringify(body);
+      if (bySeq.has(k)) expect(text, `seq ${body.seq} sent with two bodies`).toBe(bySeq.get(k));
+      bySeq.set(k, text);
+    }
+  }
+
+  it("killed after the send was prepared but before its write landed: the resumed run never reuses that seq", async () => {
+    const { storage, inner, gate } = gatedStorage();
+    const time = new ManualTime();
+    const a = harness({ storage: storage as typeof inner, time });
+    const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    await a.tick(10_000);
+    gate.hold = true; // from here, no write lands
+    run.enterStep("goal");
+    await a.tick(100); // the app dies 100 ms later
+    a.tracker.dispose();
+
+    const b = harness({ storage: inner, time: new ManualTime(time.clock.now() + 60_000) });
+    await b.tracker.resume();
+    await b.tick(0);
+    expectNoSeqReuse(a.sink.received, b.sink.received);
+    expect(a.sink.received.map((s) => s.seq)).toEqual([1]); // seq 2 never left before it was stored
+  });
+
+  it("killed after the write landed but before the send: the snapshot is not lost, even without resume", async () => {
+    const { storage, inner, gate } = gatedStorage();
+    const time = new ManualTime();
+    const a = harness({ storage: storage as typeof inner, time });
+    const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    await a.tick(10_000);
+    let writes = 0;
+    gate.onWrite = () => {
+      if (++writes === 1) a.tracker.dispose(); // the app dies the moment the first write lands
+    };
+    run.enterStep("goal");
+    await a.tick(1000);
+    expect(a.sink.received.map((s) => s.seq)).toEqual([1]);
+
+    const b = harness({ storage: inner, time: new ManualTime(time.clock.now() + 60_000) });
+    b.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST }); // not resumed
+    await b.tick(0);
+    const old = b.sink.received.filter((s) => s.run_id === run.runId);
+    expect(old.map((s) => s.steps.map((e) => e.step_key))).toEqual([["welcome", "goal"]]);
+    expectNoSeqReuse(a.sink.received, b.sink.received);
+  });
+
+  it("a storage that never finishes a write delays a send by at most persistTimeoutMs", async () => {
+    const { storage, gate } = gatedStorage();
+    gate.hold = true;
+    const h = harness({ storage: storage as ReturnType<typeof memoryStorage>, persistTimeoutMs: 1000 });
+    const run = h.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    await h.tick(999);
+    expect(h.sink.received).toHaveLength(0);
+    await h.tick(1);
+    expect(h.sink.received).toHaveLength(1);
+  });
+
+  it("without storage, a send is not delayed at all", async () => {
+    const h = harness({ storage: undefined });
+    h.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST }).enterStep("welcome");
+    await flushMicrotasks();
     expect(h.sink.received).toHaveLength(1);
   });
 });
