@@ -1,0 +1,68 @@
+{
+  "name": "@rocapine/studio-sdk",
+  "version": "0.1.0",
+  "description": "Headless client SDK for Onboarding Studio: a typed onboarding run tracker for any onboarding, including hand-coded ones",
+  "keywords": [
+    "onboarding",
+    "analytics",
+    "funnel",
+    "react-native",
+    "headless"
+  ],
+  "author": "Rocapine",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Rocapine/studio-sdk.git"
+  },
+  "sideEffects": false,
+  "exports": {
+    "./onboarding": {
+      "types": "./dist/onboarding/index.d.ts",
+      "default": "./dist/onboarding/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "default": "./dist/core/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "onboarding": [
+        "./dist/onboarding/index.d.ts"
+      ],
+      "core": [
+        "./dist/core/index.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "docs",
+    "onboarding",
+    "core",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "prepack": "npm run build",
+    "type:check": "tsc -p tsconfig.json --noEmit",
+    "type:check:tests": "tsc -p tsconfig.test.json",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "gen:schema-types": "UPDATE_SCHEMA_TYPES=1 vitest run test/schema-types.test.ts",
+    "check:exports": "node scripts/check-exports.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^22.20.4",
+    "eslint": "^9.39.5",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.71.0",
+    "vitest": "^4.1.11"
+  }
+}

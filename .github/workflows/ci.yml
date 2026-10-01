@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check (package)
+        run: npm run type:check
+
+      # vitest transpiles tests without type-checking them. This is the only
+      # step that checks the tests, the docs examples, the README example and
+      # the schema/type drift assertion.
+      - name: Type check (tests, examples, drift lock)
+        run: npm run type:check:tests
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Built subpaths resolve and require no package
+        run: npm run check:exports
+
+      - name: Packed file list
+        run: npm pack --dry-run

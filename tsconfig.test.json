@@ -1,0 +1,20 @@
+{
+  // Type-checks the tests, the docs' example payloads and the schema/type drift
+  // assertion (test/contract-types.typetest.ts). vitest transpiles tests without
+  // checking them, so this is the only thing that does: `npm run type:check:tests`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "resolveJsonModule": true,
+    "types": ["node"],
+    // The example imports the package by name, as an app would.
+    "baseUrl": ".",
+    "paths": {
+      "@rocapine/studio-sdk/onboarding": ["./src/onboarding/index.ts"],
+      "@rocapine/studio-sdk/core": ["./src/core/index.ts"]
+    }
+  },
+  "include": ["src/**/*", "test/**/*", "docs/**/*.ts", "examples/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}
