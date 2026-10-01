@@ -273,3 +273,43 @@ describe("F4: a run started this session abandons the previous launch's run, eve
     expect(stored === undefined || JSON.parse(stored).current === null).toBe(true);
   });
 });
+
+describe("F7: restore after a kill that followed exitStep", () => {
+  it("closes the pre-kill entry at the exitStep time when it is later than last_active_at", async () => {
+    const time = new ManualTime();
+    const a = harness({ debounceMs: 60_000, time });
+    const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    await a.tick(5_000);
+    run.background(); // last_active_at = 5 s
+    await a.tick(15_000);
+    run.exitStep("welcome"); // left the screen at 20 s; not sent yet (debounce)
+    await a.tick(5_000);
+    await a.tracker.idle();
+    a.tracker.dispose();
+
+    const b = harness({ storage: a.storage, time: new ManualTime(time.clock.now() + 600_000) });
+    await b.tracker.resume();
+    await b.tick(0);
+    expect(b.sink.last!.steps[0].exited_at).toBe("2026-01-10T08:00:20.000Z");
+  });
+
+  it("keeps last_active_at when it is the later of the two", async () => {
+    const time = new ManualTime();
+    const a = harness({ debounceMs: 60_000, time });
+    const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    await a.tick(5_000);
+    run.exitStep("welcome"); // 5 s
+    await a.tick(10_000);
+    run.background(); // 15 s: still in the foreground on this screen
+    await a.tick(1_000);
+    await a.tracker.idle();
+    a.tracker.dispose();
+
+    const b = harness({ storage: a.storage, time: new ManualTime(time.clock.now() + 600_000) });
+    await b.tracker.resume();
+    await b.tick(0);
+    expect(b.sink.last!.steps[0].exited_at).toBe("2026-01-10T08:00:15.000Z");
+  });
+});

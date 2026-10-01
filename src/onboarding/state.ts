@@ -195,7 +195,8 @@ export function setProperties(state: RunState, merged: Properties, nowMs: number
 
 /**
  * Restore after relaunch (3.2): close a still-open pre-kill entry at
- * last_active_at (never rewriting an exit already final), then append a new
+ * last_active_at, or at the exit exitStep recorded if that is later (the
+ * user is known to have left then); never rewrite an exit already final. Then append a new
  * entry for the restored screen at `nowMs`, unless the run is truncated or the
  * entry would break a limit, in which case recording stops instead.
  */
@@ -204,8 +205,9 @@ export function restore(state: RunState, nowMs: number): Result {
   if (!last) return unchanged(state);
   let current = state;
   if (last.exited_at === null || (state.provisionalExit && !state.truncated)) {
+    const provisional = last.exited_at !== null ? Date.parse(last.exited_at) : -Infinity;
     const steps = state.steps.slice();
-    steps[steps.length - 1] = { ...last, exited_at: toTimestamp(state.lastActiveAt) };
+    steps[steps.length - 1] = { ...last, exited_at: toTimestamp(Math.max(state.lastActiveAt, provisional)) };
     current = { ...state, steps, provisionalExit: false };
   }
   current = { ...current, lastActiveAt: nowMs };
