@@ -264,13 +264,17 @@ describe("createSerialStore: read() and the shared queue", () => {
     expect((await createSerialStore(flaky, "k", () => {}).read()).status).toBe("failed");
   });
 
-  it("two stores on the same storage and key share one queue: a later store's read sees an earlier store's writes", async () => {
+  it("read(waitFirst) reads only after waitFirst, and operations queued after it still wait for the read", async () => {
     const storage = memoryStorage();
     const slow = { ...storage, setItem: (k: string, v: string) => new Promise<void>((r) => setTimeout(() => { storage.setItem(k, v); r(); }, 5)) };
     const first = createSerialStore<{ n: number }>(slow, "k", () => {});
     first.save({ n: 1 });
     const second = createSerialStore<{ n: number }>(slow, "k", () => {});
-    expect(await second.read()).toEqual({ status: "ok", value: { n: 1 } });
+    const read = second.read(first.idle()); // another store, another queue: ordered by waitFirst
+    const write = second.saveWith(() => ({ n: 2 }));
+    expect(await read).toEqual({ status: "ok", value: { n: 1 } });
+    await write;
+    expect(storage.dump().k).toBe('{"n":2}');
   });
 
   it("saveWith() computes the value when its turn comes, and skips the write on undefined", async () => {

@@ -58,10 +58,11 @@ export interface TrackerConfig {
    */
   persistTimeoutMs?: number;
   /**
-   * The longest `resume()` and `idle()` wait for storage. If the stored state
-   * has not been read by then (a storage that hangs), `resume()` resolves null,
-   * `idle()` resolves, and the session stops writing, so a late read can never
-   * lead to an overwrite. Default 5,000 ms.
+   * How long `resume()` waits for the stored state to be read. Past it,
+   * `resume()` resolves null, and stays null for the rest of the session;
+   * writes still go on once the read lands. `idle()` waits at most this long
+   * for the read and as long again for queued writes, so up to about twice
+   * this. Default 5,000 ms.
    */
   storageReadTimeoutMs?: number;
   /** Receives what the tracker declined to do. Default: `console.warn`. */
@@ -138,6 +139,14 @@ function inertRun(runId: string): OnboardingRun {
   };
 }
 
+// Per storage key, process-wide, so they hold whichever storage object a host
+// passes (a fresh adapter on every configure() included):
+// - the bounded drain of the last disposed tracker's writes: a new tracker's
+//   first read waits for it, so it sees what the old one staged;
+// - how many live trackers use the key: two at once overwrite each other.
+const lastDrainOnKey = new Map<string, Promise<void>>();
+const liveOnKey = new Map<string, number>();
+
 export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRunTracker {
   const clock = config.clock ?? systemClock;
   const timers = config.timers ?? systemTimers;
@@ -151,11 +160,24 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
   // (twice), or it holds a format this version does not know. The session then
   // runs without persistence, and the stored value is left as it is.
   let persistenceOff = false;
+  // A storage read that timed out: resume() stays null for the rest of the session.
+  let readTimedOut = false;
+  const storageKey = config.storageKey ?? "studio-sdk:onboarding-run";
   const store: SerialStore<unknown> | null = config.storage
-    ? createSerialStore<unknown>(config.storage, config.storageKey ?? "studio-sdk:onboarding-run", (e) =>
+    ? createSerialStore<unknown>(config.storage, storageKey, (e) =>
         report({ code: "storage", message: `storage failed: ${String(e)}` }),
       )
     : null;
+  if (store) {
+    const others = liveOnKey.get(storageKey) ?? 0;
+    if (others > 0) {
+      report({
+        code: "storage",
+        message: `another live tracker already uses storageKey "${storageKey}": trackers running at once must each use their own storageKey, or they overwrite each other's unsent snapshots`,
+      });
+    }
+    liveOnKey.set(storageKey, others + 1);
+  }
 
   const deliveries = new Map<string, Delivery<OnboardingRunSnapshot>>();
   const outboxes = new Map<string, Outbound<OnboardingRunSnapshot>>();
@@ -189,7 +211,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
   // and the stored value rewritten without it. This promise never rejects.
   const loaded: Promise<void> = store
     ? store
-        .read()
+        .read(lastDrainOnKey.get(storageKey)) // after a disposed predecessor's last writes
         .then((result) => {
           if (result.status === "failed") {
             persistenceOff = true;
@@ -265,16 +287,18 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
 
   /**
    * Waits for the stored state to be read, at most storageReadTimeoutMs. On a
-   * timeout the session stops writing: storage it never read is not overwritten.
+   * timeout, resume() stays null for the rest of the session. Writes are not
+   * stopped: each is queued behind the read and composed after it, so once a
+   * late read lands they go on with what it found.
    */
   const waitLoaded = async (): Promise<boolean> => {
     if (!store) return true;
     const ok = await within(loaded.then(() => true), storageReadTimeoutMs);
-    if (!ok && !persistenceOff) {
-      persistenceOff = true;
+    if (!ok && !readTimedOut) {
+      readTimedOut = true;
       report({
         code: "storage",
-        message: `the stored state could not be read within ${storageReadTimeoutMs} ms: this session runs without persistence`,
+        message: `the stored state could not be read within ${storageReadTimeoutMs} ms: nothing will be resumed this session`,
       });
     }
     return ok;
@@ -544,7 +568,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
 
     async resume() {
       try {
-        if (!(await waitLoaded())) return null;
+        if (!(await waitLoaded()) || readTimedOut) return null;
         if (disposed || startedThisSession || !persistedCurrent) return null;
         const state = persistedCurrent;
         persistedCurrent = null;
@@ -564,6 +588,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
       }
     },
 
+    // Waits up to storageReadTimeoutMs for the read, then as long again for queued writes.
     async idle() {
       try {
         if (!store || !(await waitLoaded())) return;
@@ -594,6 +619,15 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
       // next launch.
       disposed = true;
       for (const d of deliveries.values()) d.close();
+      if (store) {
+        liveOnKey.set(storageKey, Math.max(0, (liveOnKey.get(storageKey) ?? 1) - 1));
+        // The next tracker on this key reads only after these writes (bounded by idle()).
+        const drain = this.idle();
+        lastDrainOnKey.set(storageKey, drain);
+        void drain.then(() => {
+          if (lastDrainOnKey.get(storageKey) === drain) lastDrainOnKey.delete(storageKey);
+        });
+      }
     },
   };
 }

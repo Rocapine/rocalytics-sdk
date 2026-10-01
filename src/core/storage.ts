@@ -32,8 +32,11 @@ export interface SerialStore<T> {
    * Reads the value, after every write queued before it, telling a value that
    * is not JSON (`invalid`) from storage that did not answer (`failed`). A
    * failed read is retried once, in the same turn, before it counts as failed.
+   * `waitFirst` is awaited inside that turn, before reading: operations queued
+   * after this read still wait for it, so it can be ordered behind work done
+   * elsewhere (another store's last writes) without them overtaking it.
    */
-  read(): Promise<ReadResult<T>>;
+  read(waitFirst?: Promise<unknown>): Promise<ReadResult<T>>;
   /** Queues a write (null removes the key). Never throws; failures go to `onError`. */
   save(value: T | null): void;
   /**
@@ -45,18 +48,6 @@ export interface SerialStore<T> {
   idle(): Promise<void>;
 }
 
-// One queue per storage object and key, shared by every store over them: a
-// store created later (an app reconfiguring its tracker) reads only after the
-// writes an earlier store already queued.
-const queues = new WeakMap<object, Map<string, { chain: Promise<unknown> }>>();
-function queueFor(storage: KeyValueStorage, key: string) {
-  let byKey = queues.get(storage);
-  if (!byKey) queues.set(storage, (byKey = new Map()));
-  let q = byKey.get(key);
-  if (!q) byKey.set(key, (q = { chain: Promise.resolve() }));
-  return q;
-}
-
 /**
  * JSON values under one key, with every read and write applied in call order,
  * so an older write can never land after a newer one.
@@ -66,7 +57,7 @@ export function createSerialStore<T>(
   key: string,
   onError: (error: unknown) => void,
 ): SerialStore<T> {
-  const queue = queueFor(storage, key);
+  const queue: { chain: Promise<unknown> } = { chain: Promise.resolve() };
   const enqueue = <R>(op: () => R | Promise<R>, fallback: R): Promise<R> => {
     const next = queue.chain.then(op).catch((e) => {
       onError(e);
@@ -82,8 +73,9 @@ export function createSerialStore<T>(
       return await storage.getItem(key); // one retry, still inside this turn of the queue
     }
   };
-  const read = (): Promise<ReadResult<T>> =>
+  const read = (waitFirst?: Promise<unknown>): Promise<ReadResult<T>> =>
     enqueue<ReadResult<T>>(async () => {
+      if (waitFirst) await waitFirst.catch(() => undefined);
       let raw: string | null;
       try {
         raw = await getRaw();

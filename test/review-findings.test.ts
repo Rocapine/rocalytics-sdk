@@ -1,7 +1,7 @@
 // Regression tests for the review findings, one describe block per finding
 // (round 1: F1 to F7; round 2: B1, B2, N2), so each fix is pinned by name.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { memoryStorage } from "../src/core";
+import { memoryStorage, type KeyValueStorage } from "../src/core";
 import type { OnboardingRunSnapshot, StartOptions } from "../src/onboarding";
 import { onboardingRun } from "../src/onboarding";
 import { ManualTime, MemorySink, flushMicrotasks } from "./fakes";
@@ -412,7 +412,8 @@ describe("B1: dispose() never loses a staged snapshot", () => {
 
   it("dispose() with a storage that never finishes: the completion still reaches the sink within persistTimeoutMs", async () => {
     const hanging = Object.assign(memoryStorage(), { setItem: () => new Promise<void>(() => {}) });
-    const h = harness({ storage: hanging, persistTimeoutMs: 1000 });
+    // Its own key: a disposed tracker stuck on this storage would otherwise hold back later tests on the default key.
+    const h = harness({ storage: hanging, persistTimeoutMs: 1000, storageKey: "test:hanging-dispose" });
     const run = h.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
     run.enterStep("welcome");
     run.complete();
@@ -504,7 +505,7 @@ describe("N2: a stored value of an unknown (future) format", () => {
 });
 
 describe("B1 follow-up: a write that never settles does not hang the next tracker on the same storage", () => {
-  it("configure() after a hanging write: resume() and idle() still resolve within storageReadTimeoutMs, and the session stops writing", async () => {
+  it("configure() after a hanging write: resume() and idle() still resolve, within their bounded waits", async () => {
     const time = new ManualTime();
     const inner = memoryStorage();
     inner.setItem(KEY, JSON.stringify({ format: 1, current: null, outboxes: {} }));
@@ -513,7 +514,7 @@ describe("B1 follow-up: a write that never settles does not hang the next tracke
     const sink = new MemorySink<OnboardingRunSnapshot>();
     const diagnostics: string[] = [];
     const cfg = {
-      sink, context: CONTEXT, storage, clock: time.clock, timers: time.timers, debounceMs: 0, persistTimeoutMs: 1000, storageReadTimeoutMs: 1000,
+      sink, context: CONTEXT, storage, clock: time.clock, timers: time.timers, debounceMs: 0, persistTimeoutMs: 1000, storageReadTimeoutMs: 1000, storageKey: "test:hanging-configure",
       onDiagnostic: (d: { code: string }) => diagnostics.push(d.code),
     };
     onboardingRun.configure(cfg);
@@ -534,5 +535,140 @@ describe("B1 follow-up: a write that never settles does not hang the next tracke
     expect(diagnostics).toContain("storage");
     expect(sink.received.some((s) => s.status === "completed")).toBe(true);
     onboardingRun.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Third review round.
+// ---------------------------------------------------------------------------
+
+describe("R3 blocker: a reconfigure with a fresh storage adapter over the same store", () => {
+  /** A fresh adapter object over one backing store, as a host passing an inline wrapper on each configure() would. */
+  const adapter = (inner: ReturnType<typeof memoryStorage>, time: ManualTime, delayMs: number) => {
+    const later = <T>(f: () => T) =>
+      delayMs === 0 ? f() : new Promise<T>((r) => time.timers.setTimeout(() => r(f()), delayMs));
+    return {
+      getItem: (k: string) => later(() => inner.getItem(k)),
+      setItem: (k: string, v: string) => later(() => inner.setItem(k, v)),
+      removeItem: (k: string) => later(() => inner.removeItem(k)),
+    } as KeyValueStorage;
+  };
+
+  for (const delayMs of [0, 50]) {
+    for (const firstSink of ["transient", "accepting"] as const) {
+      it(`${delayMs} ms storage, ${firstSink} first sink: the completed run is not resumed, and its completion is not lost`, async () => {
+        const time = new ManualTime();
+        const inner = memoryStorage();
+        const base = { context: CONTEXT, clock: time.clock, timers: time.timers, debounceMs: 0, onDiagnostic: () => {} };
+        const sinkA = new MemorySink<OnboardingRunSnapshot>();
+        if (firstSink === "transient") sinkA.respond = () => ({ outcome: "transient" });
+        onboardingRun.configure({ ...base, sink: sinkA, storage: adapter(inner, time, delayMs) });
+        const run = onboardingRun.start({ onboarding: IDENTITY, manifest: MANIFEST });
+        run.enterStep("welcome");
+        await time.advance(1000);
+        run.complete();
+        const sinkB = new MemorySink<OnboardingRunSnapshot>();
+        onboardingRun.configure({ ...base, sink: sinkB, storage: adapter(inner, time, delayMs) });
+
+        let resumed: unknown = "pending";
+        void onboardingRun.resume().then((r) => (resumed = r));
+        await time.advance(10_000);
+        expect(resumed).toBeNull();
+        await time.advance(60_000);
+        const all = [...sinkA.received, ...sinkB.received];
+        expect(all.filter((s) => s.run_id === run.runId && s.status === "in_progress" && s.seq >= 2)).toEqual([]);
+        const delivered = all.some((s) => s.status === "completed") && (firstSink === "accepting" || sinkB.received.some((s) => s.status === "completed"));
+        expect(delivered).toBe(true);
+        onboardingRun.dispose();
+      });
+    }
+  }
+
+  it("two trackers created directly (dispose, then create at once) over fresh adapters are ordered the same way", async () => {
+    const time = new ManualTime();
+    const a = harness({ time });
+    a.sink.respond = () => ({ outcome: "transient" });
+    const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    await a.tick(1000);
+    run.complete();
+    a.tracker.dispose();
+    const b = harness({ storage: a.storage, time }); // no tick in between: A has not drained
+    let resumed: unknown = "pending";
+    void b.tracker.resume().then((r) => (resumed = r));
+    await b.tick(10_000);
+    expect(resumed).toBeNull();
+    expect(b.sink.received.map((s) => s.status)).toContain("completed");
+  });
+});
+
+describe("N-a: a storage read that times out", () => {
+  function slowStorage(time: ManualTime, readDelayMs: number, initial?: string) {
+    const inner = memoryStorage();
+    if (initial) inner.setItem(KEY, initial);
+    const storage = Object.assign({}, inner, {
+      getItem: (k: string) => new Promise<string | null>((r) => time.timers.setTimeout(() => r(inner.getItem(k) as string | null), readDelayMs)),
+    });
+    return { inner, storage };
+  }
+
+  it("resume() stays null for the rest of the session, even after the late read finds a run", async () => {
+    // A stored in-progress run, written by a previous launch.
+    const time = new ManualTime();
+    const prev = harness({ time });
+    prev.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST }).enterStep("welcome");
+    await prev.tick();
+    await prev.tracker.idle();
+    prev.kill();
+    const stored = prev.storage.dump()[KEY];
+
+    const { storage } = slowStorage(time, 8000, stored);
+    const h = harness({ storage: storage as ReturnType<typeof memoryStorage>, time, storageReadTimeoutMs: 1000 });
+    let first: unknown = "pending";
+    void h.tracker.resume().then((r) => (first = r));
+    await h.tick(1000);
+    expect(first).toBeNull();
+    await h.tick(10_000); // the late read lands
+    expect(await h.tracker.resume()).toBeNull();
+  });
+
+  it("writes resume once the late read lands: a run started after the timeout is what the next launch finds", async () => {
+    const time = new ManualTime();
+    const prev = harness({ time });
+    const old = prev.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    old.enterStep("welcome");
+    await prev.tick();
+    await prev.tracker.idle();
+    prev.kill();
+
+    const { inner, storage } = slowStorage(time, 8000, prev.storage.dump()[KEY]);
+    const h = harness({ storage: storage as ReturnType<typeof memoryStorage>, time, storageReadTimeoutMs: 1000 });
+    void h.tracker.resume();
+    await h.tick(1000); // timed out
+    const fresh = h.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    fresh.enterStep("welcome");
+    await h.tick(10_000); // the late read lands; the queued writes follow it
+    await h.tracker.idle();
+    h.kill();
+
+    const next = harness({ storage: inner, time: new ManualTime(time.clock.now() + 60_000) });
+    const resumed = await next.tracker.resume();
+    expect(resumed?.runId).toBe(fresh.runId);
+    expect(resumed?.runId).not.toBe(old.runId);
+  });
+});
+
+describe("N-b: two live trackers on one storage key", () => {
+  it("the second one reports it, since they would overwrite each other's unsent snapshots", () => {
+    const storage = memoryStorage();
+    const a = harness({ storage, storageKey: "test:n-b" });
+    const b = harness({ storage, storageKey: "test:n-b" });
+    expect(a.diagnostics.map((d) => d.code)).not.toContain("storage");
+    expect(b.diagnostics.some((d) => d.code === "storage" && /storageKey/.test(d.message))).toBe(true);
+    a.tracker.dispose();
+    b.tracker.dispose();
+    const c = harness({ storage, storageKey: "other" });
+    expect(c.diagnostics.map((d) => d.code)).not.toContain("storage");
+    c.tracker.dispose();
   });
 });

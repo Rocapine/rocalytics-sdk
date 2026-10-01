@@ -80,6 +80,8 @@ export function harness(
   let alive = true;
   const never = () => new Promise<never>(() => {});
   // What the tracker sees: the real sink and storage, until the process is killed.
+  // A fresh adapter object per harness, so two harnesses over one store behave like
+  // two app launches (or a host passing a new adapter on each configure()).
   const processSink = { send: (b: OnboardingRunSnapshot) => (alive ? sink.send(b) : never()) };
   const processStorage: KeyValueStorage = {
     getItem: (k) => (alive ? storage.getItem(k) : never()),
