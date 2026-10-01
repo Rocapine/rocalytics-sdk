@@ -10,6 +10,7 @@
     "headless"
   ],
   "author": "Rocapine",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/Rocapine/studio-sdk.git"
