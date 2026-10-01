@@ -30,6 +30,7 @@ describe("public repository hygiene", () => {
   // published file: local machine paths and private links.
   const files = [
     "README.md",
+    "CHANGELOG.md",
     ...fs.readdirSync(DOCS).map((f) => `docs/${f}`),
     ...listTs(path.join(ROOT, "src")).map((f) => path.relative(ROOT, f)),
   ];

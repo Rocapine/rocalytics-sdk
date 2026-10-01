@@ -221,3 +221,12 @@ The public payload types are [`docs/onboarding-run.types.ts`](docs/onboarding-ru
 2. `tsc` fails unless that generated type equals `OnboardingRunSnapshot` field for field.
 
 Every payload a test captures is validated against the schema and the contract's rules beyond the schema.
+
+## Releasing
+
+Changes are recorded in [`CHANGELOG.md`](CHANGELOG.md), in Keep a Changelog format with no links, under `## [Unreleased]`. When you bump the version in `package.json`:
+
+1. Move the Unreleased entries under a new `## [x.y.z] - YYYY-MM-DD` heading. Use `unreleased` instead of the date until the version is published.
+2. Leave an empty `## [Unreleased]` section above it.
+
+A test fails if the `package.json` version has no matching heading, or if the Unreleased section is missing.

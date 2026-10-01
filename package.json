@@ -43,7 +43,8 @@
     "docs",
     "onboarding",
     "core",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json",
