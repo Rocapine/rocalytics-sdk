@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:studio-sdk:onboarding-run:1",
+  "title": "Onboarding run snapshot, schema_version 1",
+  "description": "One send of an onboarding run. Each send replaces the run's previous snapshot. Normative text: onboarding-run-contract.md. The schema is closed: an unknown field is an error.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "seq",
+    "status",
+    "started_at",
+    "completed_at",
+    "sent_at",
+    "onboarding",
+    "context",
+    "manifest",
+    "steps"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": {
+      "description": "Client-minted, lowercase UUID. One per run.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "seq": {
+      "description": "Starts at 1 and increases with every send of this run. The server keeps the snapshot with the highest seq.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": { "enum": ["in_progress", "completed"] },
+    "started_at": { "$ref": "#/$defs/timestamp" },
+    "completed_at": { "type": ["string", "null"] },
+    "sent_at": { "$ref": "#/$defs/timestamp" },
+    "onboarding": {
+      "type": "object",
+      "required": ["key", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "$ref": "#/$defs/key" },
+        "version": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,63}$"
+        },
+        "variant_key": {
+          "anyOf": [{ "$ref": "#/$defs/key" }, { "type": "null" }]
+        }
+      }
+    },
+    "studio": {
+      "description": "Optional links to Studio records. Opaque strings.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "onboarding_id": { "$ref": "#/$defs/link" },
+        "deployment_id": { "$ref": "#/$defs/link" },
+        "audience_id": { "$ref": "#/$defs/link" }
+      }
+    },
+    "context": {
+      "description": "Captured once, when the run starts. Country is not sent: the server derives it.",
+      "type": "object",
+      "required": ["app_version", "build", "platform", "os_version", "locale", "timezone"],
+      "additionalProperties": false,
+      "properties": {
+        "app_version": { "$ref": "#/$defs/shortText" },
+        "build": { "anyOf": [{ "$ref": "#/$defs/shortText" }, { "type": "null" }] },
+        "platform": { "enum": ["ios", "android", "web"] },
+        "os_version": { "anyOf": [{ "$ref": "#/$defs/shortText" }, { "type": "null" }] },
+        "locale": {
+          "description": "BCP 47 language tag.",
+          "type": "string",
+          "pattern": "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
+        },
+        "timezone": {
+          "description": "IANA time zone name.",
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$",
+          "maxLength": 64
+        },
+        "library_version": { "$ref": "#/$defs/shortText" }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "required": ["steps"],
+      "additionalProperties": false,
+      "properties": {
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "required": ["step_key"],
+            "additionalProperties": false,
+            "properties": {
+              "step_key": { "$ref": "#/$defs/key" },
+              "slot": { "$ref": "#/$defs/key" }
+            }
+          }
+        }
+      }
+    },
+    "properties": {
+      "type": "object",
+      "maxProperties": 20,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,39}$" },
+      "additionalProperties": {
+        "anyOf": [
+          { "type": "string", "maxLength": 256 },
+          { "type": "number" },
+          { "type": "boolean" },
+          { "type": "null" }
+        ]
+      }
+    },
+    "truncated": {
+      "description": "Present, and true, once the tracker has stopped recording (no new entries, answers or property changes) because recording more would break the 500-entry or 256 KiB limit. What was recorded is kept. Absent means not truncated.",
+      "const": true
+    },
+    "steps": {
+      "description": "Every screen shown so far, in the order shown. A step that was not shown has no entry: whether it was passed over is derived from the manifest at read time.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "completed" } } },
+      "then": { "properties": { "completed_at": { "$ref": "#/$defs/timestamp" } } },
+      "else": { "properties": { "completed_at": { "type": "null" } } }
+    }
+  ],
+  "$defs": {
+    "timestamp": {
+      "description": "RFC 3339 in UTC with exactly three fractional digits and a Z suffix, e.g. 2026-01-10T09:00:00.000Z. A pattern rather than format: date-time, because format is annotation-only in draft 2020-12.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "key": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "link": {
+      "anyOf": [
+        { "type": "string", "minLength": 1, "maxLength": 128 },
+        { "type": "null" }
+      ]
+    },
+    "shortText": { "type": "string", "minLength": 1, "maxLength": 32 },
+    "entry": {
+      "type": "object",
+      "required": ["step_key", "entered_at", "exited_at", "answers"],
+      "additionalProperties": false,
+      "properties": {
+        "step_key": { "$ref": "#/$defs/key" },
+        "entered_at": { "$ref": "#/$defs/timestamp" },
+        "exited_at": {
+          "anyOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }]
+        },
+        "answers": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/answer" }
+        }
+      }
+    },
+    "answer": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["question_key", "kind", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "question_key": { "$ref": "#/$defs/key" },
+            "kind": { "const": "single" },
+            "value": { "$ref": "#/$defs/key" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["question_key", "kind", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "question_key": { "$ref": "#/$defs/key" },
+            "kind": { "const": "multi" },
+            "value": {
+              "type": "array",
+              "maxItems": 50,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/key" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["question_key", "kind", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "question_key": { "$ref": "#/$defs/key" },
+            "kind": { "const": "numeric" },
+            "value": { "type": "number" },
+            "unit": { "$ref": "#/$defs/key" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["question_key", "kind", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "question_key": { "$ref": "#/$defs/key" },
+            "kind": { "const": "text" },
+            "value": { "type": "string", "maxLength": 1000 }
+          }
+        }
+      ]
+    }
+  }
+}
