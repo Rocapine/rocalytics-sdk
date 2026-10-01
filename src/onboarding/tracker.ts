@@ -130,6 +130,9 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
   const deliveries = new Map<string, Delivery<OnboardingRunSnapshot>>();
   const outboxes = new Map<string, Outbound<OnboardingRunSnapshot>>();
   let live: Controller | null = null;
+  // A run was started (or resumed) this session: the previous launch's run is then abandoned,
+  // whether or not the run started here is still live.
+  let startedThisSession = false;
   let persistedCurrent: RunState | null = null;
   let disposed = false;
 
@@ -168,7 +171,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
             if (!outboxes.has(runId) && !disposed) deliveryFor(runId).enqueue(item);
           }
           if (current && current.status === "in_progress") {
-            if (!live) persistedCurrent = current;
+            if (!startedThisSession) persistedCurrent = current;
             else sendAbandoned(current); // a new run started before storage was read
           }
         })
@@ -440,6 +443,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
           lastActiveAt: clock.now(),
         };
         live = new Controller(state);
+        startedThisSession = true;
         persist();
         return live;
       } catch (e) {
@@ -451,12 +455,13 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
     async resume() {
       try {
         await loaded;
-        if (disposed || live || !persistedCurrent) return null;
+        if (disposed || startedThisSession || !persistedCurrent) return null;
         const state = persistedCurrent;
         persistedCurrent = null;
         const now = Math.max(clock.now(), floorMs(state), state.lastActiveAt);
         const controller = new Controller(state);
         live = controller;
+        startedThisSession = true;
         const result = restore(state, now);
         for (const note of result.notes) report({ code: note, runId: state.runId, message: NOTE_MESSAGES[note] });
         controller.state = result.state;

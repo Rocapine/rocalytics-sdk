@@ -246,3 +246,30 @@ describe("F3: the seq is persisted before the snapshot is handed to the sink", (
     expect(h.sink.received).toHaveLength(1);
   });
 });
+
+describe("F4: a run started this session abandons the previous launch's run, even if it already completed", () => {
+  it("start and complete before storage is read: the old run is not resumable, and its unsent change is delivered", async () => {
+    const time = new ManualTime();
+    const a = harness({ debounceMs: 5000, time });
+    const old = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    old.enterStep("welcome");
+    old.background();
+    await a.tick(1000);
+    old.enterStep("goal"); // waiting on the debounce when the app dies
+    await a.tracker.idle();
+    a.tracker.dispose();
+
+    const b = harness({ storage: a.storage, time: new ManualTime(time.clock.now() + 60_000) });
+    const fresh = b.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST }); // before the first storage read
+    fresh.enterStep("welcome");
+    fresh.complete();
+    await b.tracker.idle();
+    expect(await b.tracker.resume()).toBeNull();
+    await b.tick(0);
+    const ofOld = b.sink.received.filter((s) => s.run_id === old.runId);
+    expect(ofOld.map((s) => s.steps.map((e) => e.step_key))).toEqual([["welcome", "goal"]]);
+    await b.tracker.idle();
+    const stored = b.storage.dump()[KEY];
+    expect(stored === undefined || JSON.parse(stored).current === null).toBe(true);
+  });
+});
