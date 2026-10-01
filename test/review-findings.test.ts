@@ -1,10 +1,11 @@
-// Regression tests for the findings of the first review of the tracker, one
-// describe block per finding (F1 to F7), so each fix is pinned by name.
+// Regression tests for the review findings, one describe block per finding
+// (round 1: F1 to F7; round 2: B1, B2, N2), so each fix is pinned by name.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { memoryStorage } from "../src/core";
 import type { OnboardingRunSnapshot, StartOptions } from "../src/onboarding";
-import { ManualTime, flushMicrotasks } from "./fakes";
-import { IDENTITY, MANIFEST, harness } from "./harness";
+import { onboardingRun } from "../src/onboarding";
+import { ManualTime, MemorySink, flushMicrotasks } from "./fakes";
+import { CONTEXT, IDENTITY, MANIFEST, harness } from "./harness";
 
 const KEY = "studio-sdk:onboarding-run";
 
@@ -100,7 +101,6 @@ describe("F2: malformed stored state", () => {
     ["a current whose steps are not a list", JSON.stringify({ format: 1, current: { status: "in_progress", dirty: true, steps: "x", lastSeq: 1, runId: "r" }, outboxes: {} })],
     ["a number", "42"],
     ["a list", "[]"],
-    ["an unknown format", JSON.stringify({ format: 2 })],
     ["not JSON", "{not json"],
   ];
 
@@ -195,7 +195,7 @@ describe("F3: the seq is persisted before the snapshot is handed to the sink", (
     gate.hold = true; // from here, no write lands
     run.enterStep("goal");
     await a.tick(100); // the app dies 100 ms later
-    a.tracker.dispose();
+    a.kill();
 
     const b = harness({ storage: inner, time: new ManualTime(time.clock.now() + 60_000) });
     await b.tracker.resume();
@@ -213,7 +213,7 @@ describe("F3: the seq is persisted before the snapshot is handed to the sink", (
     await a.tick(10_000);
     let writes = 0;
     gate.onWrite = () => {
-      if (++writes === 1) a.tracker.dispose(); // the app dies the moment the first write lands
+      if (++writes === 1) a.kill(); // the app dies the moment the first write lands
     };
     run.enterStep("goal");
     await a.tick(1000);
@@ -257,7 +257,7 @@ describe("F4: a run started this session abandons the previous launch's run, eve
     await a.tick(1000);
     old.enterStep("goal"); // waiting on the debounce when the app dies
     await a.tracker.idle();
-    a.tracker.dispose();
+    a.kill();
 
     const b = harness({ storage: a.storage, time: new ManualTime(time.clock.now() + 60_000) });
     const fresh = b.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST }); // before the first storage read
@@ -286,7 +286,7 @@ describe("F7: restore after a kill that followed exitStep", () => {
     run.exitStep("welcome"); // left the screen at 20 s; not sent yet (debounce)
     await a.tick(5_000);
     await a.tracker.idle();
-    a.tracker.dispose();
+    a.kill();
 
     const b = harness({ storage: a.storage, time: new ManualTime(time.clock.now() + 600_000) });
     await b.tracker.resume();
@@ -305,11 +305,200 @@ describe("F7: restore after a kill that followed exitStep", () => {
     run.background(); // 15 s: still in the foreground on this screen
     await a.tick(1_000);
     await a.tracker.idle();
-    a.tracker.dispose();
+    a.kill();
 
     const b = harness({ storage: a.storage, time: new ManualTime(time.clock.now() + 600_000) });
     await b.tracker.resume();
     await b.tick(0);
     expect(b.sink.last!.steps[0].exited_at).toBe("2026-01-10T08:00:15.000Z");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Second review round.
+// ---------------------------------------------------------------------------
+
+describe("B1: dispose() never loses a staged snapshot", () => {
+  it("complete() then dispose() at once: the completion reaches the sink, and the next launch does not resume the run", async () => {
+    const time = new ManualTime();
+    const a = harness({ time });
+    const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    await a.tick(1000);
+    run.complete();
+    a.tracker.dispose();
+    await a.tick(5000);
+    expect(a.sink.received.map((s) => [s.seq, s.status])).toEqual([[1, "in_progress"], [2, "completed"]]);
+
+    const b = harness({ storage: a.storage, time: new ManualTime(time.clock.now() + 60_000) });
+    expect(await b.tracker.resume()).toBeNull();
+    await b.tick(60_000);
+    expect(b.sink.received.every((s) => s.status === "completed" && s.seq === 2)).toBe(true);
+  });
+
+  it("onboardingRun.configure() again right after complete(): the completion is not lost", async () => {
+    const time = new ManualTime();
+    const storage = memoryStorage();
+    const sink = new MemorySink<OnboardingRunSnapshot>();
+    const cfg = { sink, context: CONTEXT, storage, clock: time.clock, timers: time.timers, debounceMs: 0, onDiagnostic: () => {} };
+    onboardingRun.configure(cfg);
+    const run = onboardingRun.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    await time.advance(1000);
+    run.complete();
+    onboardingRun.configure(cfg); // disposes the first tracker
+    await time.advance(5000);
+    // The new tracker may send the same completion again (no write after dispose
+    // records that it was accepted): same seq, same body, which the ingest ignores.
+    const completions = sink.received.filter((s) => s.status === "completed");
+    expect(completions.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(completions.map((s) => JSON.stringify(s))).size).toBe(1);
+    expect(await onboardingRun.resume()).toBeNull();
+    await time.advance(60_000);
+    expect(sink.received.filter((s) => s.status === "in_progress" && s.seq >= 2)).toEqual([]);
+    onboardingRun.dispose();
+  });
+
+  it("background() then dispose(), with a change still on the debounce: both survive, and resume() picks them up", async () => {
+    const time = new ManualTime();
+    const a = harness({ time, debounceMs: 5000 });
+    const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    run.background();
+    await a.tick(1000);
+    run.enterStep("goal"); // on the debounce
+    a.tracker.dispose();
+    await a.tick(5000);
+    expect(a.sink.last!.steps.map((s) => s.step_key)).toEqual(["welcome", "goal"]);
+
+    const b = harness({ storage: a.storage, time: new ManualTime(time.clock.now() + 60_000) });
+    const resumed = await b.tracker.resume();
+    await b.tick(0);
+    expect(resumed?.runId).toBe(run.runId);
+    expect(b.sink.last!.steps.map((s) => s.step_key)).toEqual(["welcome", "goal", "goal"]);
+    expect(b.sink.last!.seq).toBe(a.sink.last!.seq + 1);
+  });
+
+  it("a completion the sink cannot take at dispose time is kept in storage and delivered by the next launch", async () => {
+    const time = new ManualTime();
+    const a = harness({ time });
+    a.sink.respond = () => ({ outcome: "transient" });
+    const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    run.complete();
+    a.tracker.dispose();
+    await a.tick(60_000);
+    const attempts = a.sink.received.filter((s) => s.status === "completed").length;
+    expect(attempts).toBe(1); // one last attempt, then no retry timers after dispose
+    expect(time.pendingTimers).toBe(0);
+
+    const b = harness({ storage: a.storage, time: new ManualTime(time.clock.now() + 60_000) });
+    await b.tick(0);
+    expect(b.sink.received.map((s) => s.status)).toEqual(["completed"]);
+  });
+
+  it("dispose() twice is harmless", async () => {
+    const h = harness();
+    const run = h.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    run.complete();
+    expect(() => {
+      h.tracker.dispose();
+      h.tracker.dispose();
+    }).not.toThrow();
+    await h.tick(60_000);
+    expect(h.sink.received.filter((s) => s.status === "completed")).toHaveLength(1);
+  });
+
+  it("dispose() with a storage that never finishes: the completion still reaches the sink within persistTimeoutMs", async () => {
+    const hanging = Object.assign(memoryStorage(), { setItem: () => new Promise<void>(() => {}) });
+    const h = harness({ storage: hanging, persistTimeoutMs: 1000 });
+    const run = h.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    run.complete();
+    expect(() => h.tracker.dispose()).not.toThrow();
+    await h.tick(1000);
+    expect(h.sink.received.map((s) => s.status)).toContain("completed");
+  });
+
+  it("after dispose(), the run records nothing more and no new run starts", async () => {
+    const h = harness();
+    const run = h.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    await h.tick();
+    h.tracker.dispose();
+    run.enterStep("goal");
+    h.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST }).enterStep("welcome");
+    await h.tick(60_000);
+    expect(h.sink.received).toHaveLength(1);
+  });
+});
+
+describe("B2: a failed storage read never deletes or overwrites what it did not read", () => {
+  const completedBody = (runId: string) => ({
+    schema_version: 1, run_id: runId, seq: 2, status: "completed",
+    started_at: "2026-01-10T07:00:00.000Z", completed_at: "2026-01-10T07:00:10.000Z", sent_at: "2026-01-10T07:00:10.000Z",
+    onboarding: { key: "main", version: "3" },
+    context: { app_version: "2.4.0", build: "412", platform: "ios", os_version: "18.1", locale: "en-US", timezone: "America/New_York" },
+    manifest: { steps: [{ step_key: "welcome" }] },
+    steps: [{ step_key: "welcome", entered_at: "2026-01-10T07:00:00.000Z", exited_at: "2026-01-10T07:00:10.000Z", answers: [] }],
+  });
+  const RUN = "00000000-0000-4000-8000-0000000000cc";
+  const blob = JSON.stringify({ format: 1, current: null, outboxes: { [RUN]: { seq: 2, body: completedBody(RUN) } } });
+
+  function flakyStorage(failures: number) {
+    const inner = memoryStorage();
+    inner.setItem(KEY, blob);
+    let left = failures;
+    return {
+      inner,
+      storage: Object.assign({}, inner, {
+        getItem: (k: string) => (left-- > 0 ? Promise.reject(new Error("read failed")) : inner.getItem(k)),
+      }),
+    };
+  }
+
+  it("a read that fails twice: the stored completion is left untouched, even after a whole run this session", async () => {
+    const { inner, storage } = flakyStorage(2);
+    const a = harness({ storage: storage as typeof inner });
+    a.sink.respond = () => ({ outcome: "transient" });
+    const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    run.complete();
+    await a.tick(5000);
+    await a.tracker.idle();
+    expect(inner.dump()[KEY]).toBe(blob);
+    expect(a.diagnostics.map((d) => d.code)).toContain("storage");
+    expect(a.sink.received.some((s) => s.status === "completed")).toBe(true); // this session's run is still sent
+    a.tracker.dispose();
+
+    const b = harness({ storage: inner });
+    await b.tick(0);
+    expect(b.sink.received).toEqual([completedBody(RUN)]);
+  });
+
+  it("a read that fails once is retried, and the stored completion is delivered in the same session", async () => {
+    const { storage } = flakyStorage(1);
+    const h = harness({ storage: storage as ReturnType<typeof memoryStorage> });
+    await h.tick(0);
+    expect(h.sink.received).toEqual([completedBody(RUN)]);
+  });
+});
+
+describe("N2: a stored value of an unknown (future) format", () => {
+  it("is left untouched, and the session runs without persistence", async () => {
+    const storage = memoryStorage();
+    const future = JSON.stringify({ format: 2, runs: { r: { unsent: true } } });
+    storage.setItem(KEY, future);
+    const h = harness({ storage });
+    const run = h.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    run.complete();
+    await h.tick(5000);
+    await h.tracker.idle();
+    expect(storage.dump()[KEY]).toBe(future);
+    expect(h.sink.received.map((s) => s.status)).toEqual(["in_progress", "completed"]);
+    expect(h.diagnostics.some((d) => d.code === "storage" && /format/.test(d.message))).toBe(true);
+    expect(await h.tracker.resume()).toBeNull();
   });
 });

@@ -10,7 +10,7 @@ const at = (s: number) => new Date(T0 + s * 1000).toISOString();
 /** The app is killed: its in-memory tracker is gone, only storage survives. */
 async function kill(h: Harness) {
   await h.tracker.idle();
-  h.tracker.dispose();
+  h.kill();
 }
 /** The app is launched again, `seconds` after T0, on the same storage. */
 const relaunch = (h: Harness, seconds: number, overrides = {}) =>

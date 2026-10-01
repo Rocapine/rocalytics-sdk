@@ -39,7 +39,12 @@ export interface TrackerConfig {
   timers?: Timers;
   /** Run id minter. Must return a lowercase UUID. Default: UUIDv7. */
   uuid?: () => string;
-  /** Changes within this window go out as one send. Default 500 ms. Completion and background are sent at once. */
+  /**
+   * Changes within this window go out as one send. Default 500 ms. Completion
+   * and background skip the debounce, but with `storage` every send, these
+   * included, first waits for its snapshot to be written: up to
+   * `persistTimeoutMs` (default 1,000 ms) later.
+   */
   debounceMs?: number;
   retry?: RetryPolicy;
   /** A send with no answer after this long is retried. Default 30,000 ms. */
@@ -125,13 +130,17 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
   const report = safeDiagnostics(config.onDiagnostic);
   const fallbackUuid = createUuid(clock);
   const debounceMs = config.debounceMs ?? 500;
-  // Set when storage held something unusable, so the first write replaces it.
+  // Set only when the stored value was READ and found unparseable or malformed,
+  // so it is rewritten without the bad part. A failed read never sets it.
   let rewrite = false;
+  // Set when the stored value must not be touched: storage could not be read
+  // (twice), or it holds a format this version does not know. The session then
+  // runs without persistence, and the stored value is left as it is.
+  let persistenceOff = false;
   const store: SerialStore<unknown> | null = config.storage
-    ? createSerialStore<unknown>(config.storage, config.storageKey ?? "studio-sdk:onboarding-run", (e) => {
-        rewrite = true;
-        report({ code: "storage", message: `storage failed: ${String(e)}` });
-      })
+    ? createSerialStore<unknown>(config.storage, config.storageKey ?? "studio-sdk:onboarding-run", (e) =>
+        report({ code: "storage", message: `storage failed: ${String(e)}` }),
+      )
     : null;
 
   const deliveries = new Map<string, Delivery<OnboardingRunSnapshot>>();
@@ -166,28 +175,46 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
   // and the stored value rewritten without it. This promise never rejects.
   const loaded: Promise<void> = store
     ? store
-        .load()
-        .then((raw) => {
+        .read()
+        .then((result) => {
+          if (result.status === "failed") {
+            persistenceOff = true;
+            return report({
+              code: "storage",
+              message: `reading stored state failed twice (${String(result.error)}): it is left untouched, and this session runs without persistence`,
+            });
+          }
+          if (result.status === "invalid") {
+            rewrite = true;
+            return report({ code: "storage", message: "the stored state is not JSON: discarded" });
+          }
+          const raw = result.value;
           if (raw === null) return;
+          const format = (raw as { format?: unknown }).format;
+          if (raw && typeof raw === "object" && !Array.isArray(raw) && typeof format === "number" && format !== 1) {
+            persistenceOff = true;
+            return report({
+              code: "storage",
+              message: `the stored state has format ${format}, which this version does not know: it is left untouched, and this session runs without persistence`,
+            });
+          }
           const { current, outboxes: stored, problems } = parsePersisted(raw);
           if (problems.length) {
             rewrite = true;
             report({ code: "storage", message: `${problems.join("; ")}: discarded` });
           }
+          // Merged even after dispose(), so a write still queued keeps them.
           for (const [runId, item] of stored) {
-            if (!outboxes.has(runId) && !disposed) deliveryFor(runId).enqueue(item);
+            if (!outboxes.has(runId)) deliveryFor(runId).enqueue(item);
           }
           if (current && current.status === "in_progress") {
             if (!startedThisSession) persistedCurrent = current;
             else sendAbandoned(current); // a new run started before storage was read
           }
         })
-        .catch((e) => {
-          rewrite = true;
-          report({ code: "storage", message: `reading stored state failed: ${String(e)}` });
-        })
+        .catch((e) => report({ code: "storage", message: `loading stored state failed: ${String(e)}` }))
         .then(() => {
-          if (rewrite && store && !disposed) store.save(compose());
+          if (rewrite && !persistenceOff && !disposed) void persist();
           rewrite = false;
         })
     : Promise.resolve();
@@ -198,23 +225,25 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
    * send it now, so the latest snapshot is not lost (section 5).
    */
   function sendAbandoned(state: RunState) {
-    if (disposed || !state.dirty || state.steps.length === 0) return;
+    if (!state.dirty || state.steps.length === 0) return;
     const seq = state.lastSeq + 1;
     stageAndSend(state.runId, { seq, body: toSnapshot(state, seq, Math.max(clock.now(), floorMs(state))) }, false);
   }
 
   const persistTimeoutMs = config.persistTimeoutMs ?? 1000;
 
-  /** Queues a write of the whole tracker state. Never rejects; resolves once the write is done (or failed). */
+  /**
+   * Queues a write of the whole tracker state, in order, right away; its value
+   * is composed when its turn comes (after the stored state was read). A write
+   * queued before dispose() still happens: that is how dispose() keeps a
+   * staged snapshot. Never rejects; resolves once the write is done or failed.
+   */
   const persist = (): Promise<void> => {
     if (!store || disposed) return Promise.resolve();
-    return loaded
-      .then(() => {
-        if (disposed) return;
-        store.save(compose());
-        return store.idle();
-      })
-      .catch((e) => report({ code: "storage", message: `saving failed: ${String(e)}` }));
+    return store.saveWith(async () => {
+      await loaded;
+      return persistenceOff ? undefined : compose();
+    });
   };
 
   /**
@@ -224,8 +253,8 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
    */
   function stageAndSend(runId: string, item: Outbound<OnboardingRunSnapshot>, flush: boolean) {
     outboxes.set(runId, item);
+    // Not gated on dispose(): a snapshot staged before it is still sent (once; see deliveryFor).
     const send = () => {
-      if (disposed) return;
       const d = deliveryFor(runId);
       d.enqueue(item);
       if (flush) d.flush();
@@ -273,6 +302,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
         },
       });
       deliveries.set(runId, d);
+      if (disposed) d.close(); // after dispose(): one last attempt per snapshot, no retry timers
     }
     return d;
   }
@@ -341,8 +371,13 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
       stageAndSend(this.state.runId, { seq, body }, flush);
     }
 
+    /** A change waiting on the debounce is sent now. */
+    flushDebounce() {
+      if (this.debounce !== null) this.sendNow();
+    }
+
     deactivate() {
-      if (this.debounce !== null) this.sendNow(); // a change waiting on the debounce still goes out
+      this.flushDebounce(); // a change waiting on the debounce still goes out
       this.active = false;
     }
 
@@ -494,8 +529,20 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
     },
 
     dispose() {
+      if (disposed) return;
+      // A change still waiting on the debounce becomes a staged snapshot first.
+      try {
+        live?.flushDebounce();
+      } catch (e) {
+        report({ code: "internal-error", message: `dispose: ${String(e)}` });
+      }
+      // From here nothing records, nothing new starts, and no write is queued.
+      // What was staged before still goes through: its write is already queued,
+      // and its send is handed to a closed delivery (one last attempt, no retry
+      // timers). A snapshot the sink does not take stays in storage for the
+      // next launch.
       disposed = true;
-      for (const d of deliveries.values()) d.stop();
+      for (const d of deliveries.values()) d.close();
     },
   };
 }
