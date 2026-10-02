@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RocalyticsClient, loadExpoModules, type Diagnostic } from "../src/rocalytics";
 import { FakeSecureStore, IOS, ROCA_ID, fakeModules, recordingFetch, stubIntl } from "./rocalytics.fakes";
 
@@ -141,6 +141,23 @@ describe("an inert client", () => {
     expect(diagnostics.map((d) => [d.code, d.message])).toEqual([["init-failed", "[ROCALYTICS] identify failed: 503"]]);
     // The id was obtained before identify failed, so later events still go out (as the reference does).
     expect(client.rocaId).toBe(ROCA_ID);
+  });
+});
+
+describe("console output with the default onDiagnostic", () => {
+  it("a working client writes nothing to the console: no request, response or purchase property", async () => {
+    const methods = (["log", "info", "warn", "error", "debug"] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
+    const http = recordingFetch();
+    const client = new RocalyticsClient({ modules: fakeModules(IOS, new FakeSecureStore()), fetch: http.fetch });
+    await client.ready;
+    await client.trackPurchase({ isTrial: false, value: 9.99, currency: "EUR", originalTransactionIdentifier: "t-1", productId: "pro_monthly" });
+    await client.trackOnboarding("welcome", { goal: "x" });
+    await client.identify({ email: "user@example.com" });
+    expect(http.requests).toHaveLength(5);
+    for (const spy of methods) {
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    }
   });
 });
 

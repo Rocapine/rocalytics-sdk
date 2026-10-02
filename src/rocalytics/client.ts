@@ -69,7 +69,9 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
  * `getDemandScore`, which rejects because it has no value to return.
  *
  * A method whose request gets a non-2xx answer rejects with
- * `[ROCALYTICS] <endpoint> failed: <status>`. Nothing is logged to the console.
+ * `[ROCALYTICS] <endpoint> failed: <status>`. No request, response or
+ * purchase property is ever logged; only start-up problems are reported, to
+ * `onDiagnostic` (default `console.warn`).
  */
 export class RocalyticsClient {
   /** The device's id, once `ready` resolves. Null while starting, and when inert. */

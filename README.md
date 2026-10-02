@@ -221,6 +221,8 @@ The client talks to these modules. They are optional peers, so an app that does 
 | `expo-secure-store` | `^15.0.0 \|\| >=55.0.0` |
 | `react-native` | `>=0.81.0` |
 
+npm still checks an optional peer that the app already has. An app with `react-native` below 0.81, or an Expo module older than SDK 54, gets an `ERESOLVE` error when it installs this package, even if it imports only `/onboarding`. An app with none of these packages installs it without complaint.
+
 They are loaded when the client starts, never when the subpath is imported. The client first checks with `expo-modules-core` that each native module is in the app binary. If one is missing, for example because a JS update reached an older build, the client is **inert**: `ready` resolves, `rocaId` stays null, every method resolves without sending anything, and the cause goes to `onDiagnostic`. Nothing throws at launch.
 
 An uninstalled peer is a different case. Metro resolves every `require` when it bundles, so a missing package fails the bundle rather than making the client inert.
@@ -281,7 +283,7 @@ export function setUpOnboardingTracking(storage: KeyValueStorage, context: () =>
 | `trackOnboarding(stepId, answers?, metadata?)` | The pre-v1 onboarding calls, unchanged. Resends every step seen so far. |
 | `getDemandScore(signals?)` | The server's 1 to 100 demand score for this install. Rejects when the client is inert. |
 
-A method whose request gets a non-2xx answer rejects with `[ROCALYTICS] <endpoint> failed: <status>`, as the copied client did. The client logs nothing to the console. The request builders (`buildTrackRequest`, `buildIdentifyRequest`, `buildOnboardingResponseRequest`, `buildDemandScoreRequest`) and `getEventId` are exported as pure functions.
+A method whose request gets a non-2xx answer rejects with `[ROCALYTICS] <endpoint> failed: <status>`, as the copied client did. The client never logs a request, its response or purchase properties. The only thing it reports is why it went inert or why start-up failed, through `onDiagnostic`, which defaults to `console.warn`. The request builders (`buildTrackRequest`, `buildIdentifyRequest`, `buildOnboardingResponseRequest`, `buildDemandScoreRequest`) and `getEventId` are exported as pure functions.
 
 **Onboarding runs.** `createRocalyticsOnboardingSink(client)` is a sink for the tracker. The Rocalytics ingest reads only the pre-v1 onboarding payload, so each snapshot is mapped onto it (`toOnboardingResponsePayload`): entries become `responses`, answers become `{ [questionKey]: value }`, and the run's identity and Studio links go in `onboarding_metadata`. A numeric answer's unit is dropped, because that shape has no place for it. The ingest keeps one onboarding per roca id, so report a flow through the sink or through `trackOnboarding`, not both.
 
@@ -303,7 +305,7 @@ That endpoint answers with a status code and no outcome body, so this sink reads
 | passed `superwallEvent` to `trackPurchase`, or called `trackSuperwallEvent` | Neither is in the package: Superwall event tracking is not ported. |
 | called `getEventId(name, transactionId)` | Call `getEventId(name, { original_transaction_identifier: transactionId })`. It returns `undefined` when there is no transaction id. |
 | ran an app-specific step after start-up, such as handing the roca id to an attribution SDK | Do it in the app: `await rocalytics.ready`, then use `rocalytics.rocaId` when it is not null. |
-| logged requests or purchase properties to the console | The package logs nothing. Start-up problems go to `onDiagnostic`. A failed request still rejects. |
+| logged requests or purchase properties to the console | The package logs neither. Start-up problems go to `onDiagnostic` (default `console.warn`; pass your own handler to route or silence them). A failed request still rejects. |
 | identified without `locale` at start-up | The start-up identify now sends the device locale, as the reference does. |
 | read `selectedVersion` or `versions` from `DemandScoreResult` as always present | Both are optional, so a response from before the score was versioned still fits. Check for them. |
 | mocked the copied module in Jest | Mock `@rocapine/studio-sdk/rocalytics` instead, or create the client with `modules` and `fetch` stand-ins. |

@@ -17,7 +17,7 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
   - The roca id is stored under `rocalytics-roca-id`. A device that has only the misspelled `rocalitics-roca-id` keeps its id, which is copied to the new key. The old key is not deleted. A failed read never mints a new id.
   - `install` fires once per device. Both `rocadata-install-tracked` and `rocadata-install-tracked-4` count as already sent.
   - The Expo modules load lazily, after a presence check through `expo-modules-core`. When one is missing from the binary, the client is inert and reports why through `onDiagnostic`. It does not throw.
-  - Nothing is logged to the console, purchase properties included.
+  - No request, response or purchase property is logged. Start-up problems go to `onDiagnostic`, which defaults to `console.warn`.
 - `createRocalyticsOnboardingSink(client)`: delivers the onboarding run tracker's snapshots to Rocalytics.
   - Each snapshot is mapped onto the pre-v1 onboarding payload (`toOnboardingResponsePayload`), the only shape the ingest reads.
   - The sink reads the HTTP status (`rocalyticsOutcome`): 2xx is accepted, 400 and 405 are rejected, everything else is transient.
