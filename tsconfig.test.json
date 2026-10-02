@@ -12,7 +12,8 @@
     "baseUrl": ".",
     "paths": {
       "@rocapine/studio-sdk/onboarding": ["./src/onboarding/index.ts"],
-      "@rocapine/studio-sdk/core": ["./src/core/index.ts"]
+      "@rocapine/studio-sdk/core": ["./src/core/index.ts"],
+      "@rocapine/studio-sdk/rocalytics": ["./src/rocalytics/index.ts"]
     }
   },
   "include": ["src/**/*", "test/**/*", "docs/**/*.ts", "examples/**/*.ts"],

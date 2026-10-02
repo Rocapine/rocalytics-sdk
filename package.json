@@ -1,13 +1,14 @@
 {
   "name": "@rocapine/studio-sdk",
   "version": "0.1.0",
-  "description": "Headless client SDK for Onboarding Studio: a typed onboarding run tracker for any onboarding, including hand-coded ones",
+  "description": "Headless client SDK for Onboarding Studio: a typed onboarding run tracker for any onboarding, including hand-coded ones, and the Rocalytics client",
   "keywords": [
     "onboarding",
     "analytics",
     "funnel",
     "react-native",
-    "headless"
+    "headless",
+    "rocalytics"
   ],
   "author": "Rocapine",
   "license": "MIT",
@@ -25,6 +26,10 @@
       "types": "./dist/core/index.d.ts",
       "default": "./dist/core/index.js"
     },
+    "./rocalytics": {
+      "types": "./dist/rocalytics/index.d.ts",
+      "default": "./dist/rocalytics/index.js"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -34,6 +39,9 @@
       ],
       "core": [
         "./dist/core/index.d.ts"
+      ],
+      "rocalytics": [
+        "./dist/rocalytics/index.d.ts"
       ]
     }
   },
@@ -43,6 +51,7 @@
     "docs",
     "onboarding",
     "core",
+    "rocalytics",
     "README.md",
     "CHANGELOG.md"
   ],
@@ -56,6 +65,38 @@
     "test:watch": "vitest",
     "gen:schema-types": "UPDATE_SCHEMA_TYPES=1 vitest run test/schema-types.test.ts",
     "check:exports": "node scripts/check-exports.mjs"
+  },
+  "peerDependencies": {
+    "expo-application": "*",
+    "expo-crypto": "*",
+    "expo-device": "*",
+    "expo-modules-core": "*",
+    "expo-network": "*",
+    "expo-secure-store": "*",
+    "react-native": "*"
+  },
+  "peerDependenciesMeta": {
+    "expo-application": {
+      "optional": true
+    },
+    "expo-crypto": {
+      "optional": true
+    },
+    "expo-device": {
+      "optional": true
+    },
+    "expo-modules-core": {
+      "optional": true
+    },
+    "expo-network": {
+      "optional": true
+    },
+    "expo-secure-store": {
+      "optional": true
+    },
+    "react-native": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

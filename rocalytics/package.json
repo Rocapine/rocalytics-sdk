@@ -1,0 +1,4 @@
+{
+  "main": "../dist/rocalytics/index.js",
+  "types": "../dist/rocalytics/index.d.ts"
+}

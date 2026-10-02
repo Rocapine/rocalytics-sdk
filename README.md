@@ -1,8 +1,8 @@
 # @rocapine/studio-sdk
 
-Headless client SDK for Onboarding Studio. The first surface is the **onboarding run tracker**: a small, typed API that lets any onboarding report its progress in one versioned shape, including an onboarding built entirely in app code with no SDK-rendered screen.
+Headless client SDK for Onboarding Studio. The first surface is the **onboarding run tracker**: a small, typed API that lets any onboarding report its progress in one versioned shape, including an onboarding built entirely in app code with no SDK-rendered screen. The second is the [**Rocalytics client**](#rocalytics-client), for apps that report installs, purchases and onboarding progress to Rocalytics.
 
-- **Headless.** No renderer, router or UI library. The package has no runtime dependency and no peer dependency at all.
+- **Headless.** No renderer, router or UI library. The package has no runtime dependency. The tracker (`/onboarding`, `/core`) has no peer dependency either; only `/rocalytics` uses optional peers, the Expo native modules it talks to.
 - **One payload contract.** Every send is a snapshot in the shape of the [onboarding run contract v1](docs/onboarding-run-contract.md) (`schema_version: 1`), with a [JSON Schema](docs/onboarding-run.schema.json) and [TypeScript types](docs/onboarding-run.types.ts). The contract is authoritative; this README only explains how the tracker applies it.
 - **Pluggable transport.** Snapshots go to a sink. The stock sink POSTs to an HTTP collector you configure.
 
@@ -14,10 +14,10 @@ Headless client SDK for Onboarding Studio. The first surface is the **onboarding
 |---|---|
 | `@rocapine/studio-sdk/onboarding` | The onboarding run tracker. Public API. |
 | `@rocapine/studio-sdk/core` | Shared building blocks: the sink interface, latest-snapshot delivery, id minting, run context, storage. Internal: exported for custom sinks and future surfaces, with no stability promise beyond what `/onboarding` re-exports. |
-| `@rocapine/studio-sdk/rocalytics` | Placeholder, not shipped. Reserved for an analytics events surface. |
+| `@rocapine/studio-sdk/rocalytics` | The Rocalytics client, and a sink that delivers the tracker's runs to Rocalytics. Public API. Needs the Expo peers below. |
 | `@rocapine/studio-sdk/paywall` | Placeholder, not shipped. Reserved for a paywall surface. |
 
-Tracking never imports remote-control code. Any later remote-control subpath will bring its heavier dependencies as optional peers, so an app that only tracks does not install them.
+Tracking never imports remote-control code, and `/onboarding` never imports `/rocalytics`: an app that only tracks onboarding installs and bundles no native module. Any later remote-control subpath will bring its heavier dependencies as optional peers in the same way.
 
 ## A hand-coded onboarding
 
@@ -202,6 +202,129 @@ The tracker enforces the contract's limits:
 - a **recording budget of 261,120 bytes**, measured on the snapshot in the form its completion send would take.
 
 When recording one more entry, answer or property change would cross a limit, the tracker stops recording and sets `truncated: true`. It keeps the entries it already has, and it still sends `completed` when the run completes.
+
+## Rocalytics client
+
+`@rocapine/studio-sdk/rocalytics` is the Rocalytics client that apps used to copy into their codebase as `rocalytics.client.ts`. It sends the same requests as the reference client: a test replays scenarios captured from the reference itself and compares every URL, header and body.
+
+### Peer dependencies
+
+The client talks to these modules. They are optional peers, so an app that does not import `/rocalytics` needs none of them. An app that does must install all of them, which an Expo app usually already has, or gets with `npx expo install expo-application expo-crypto expo-device expo-network expo-secure-store`:
+
+| Package | Range |
+|---|---|
+| `expo-application` | `*` |
+| `expo-crypto` | `*` |
+| `expo-device` | `*` |
+| `expo-modules-core` | `*` |
+| `expo-network` | `*` |
+| `expo-secure-store` | `*` |
+| `react-native` | `*` |
+
+Every range is `*` on purpose. npm checks an optional peer that the app already has, so any range would stop some app that only imports `/onboarding` from installing the package. Compatibility is checked at run time instead, by the presence probe described below. Only the Expo SDK 54 to 57 versions of these modules have been checked against the client, by reading their source.
+
+They are loaded when the client starts, never when the subpath is imported. The client first checks with `expo-modules-core` that each native module is in the app binary. If one is missing, for example because a JS update reached an older build, the client is **inert**: `ready` resolves, `rocaId` stays null, every method resolves without sending anything, and the cause goes to `onDiagnostic`. Nothing throws at launch.
+
+An uninstalled peer is a different case. Metro resolves every `require` when it bundles, so a missing package fails the bundle rather than making the client inert.
+
+### Usage
+
+This file is [`examples/rocalytics-client.ts`](examples/rocalytics-client.ts), type-checked and run by the test suite:
+
+```ts
+import { createRocalyticsOnboardingSink, getEventId, RocalyticsClient } from "@rocapine/studio-sdk/rocalytics";
+import { onboardingRun, type KeyValueStorage, type RunContextInput } from "@rocapine/studio-sdk/onboarding";
+
+// 1. One client per app, created once at startup. It starts itself: it reads
+//    (or mints) the device's roca id, identifies the device, and sends
+//    `install` once per device. Every method waits for that.
+export const rocalytics = new RocalyticsClient();
+
+// 2. Identifiers, whenever the app learns them. Null values are dropped.
+export async function onSignedIn(userId: string, revenueCatId: string | null) {
+  await rocalytics.identify({ user_id: userId, revenue_cat_id: revenueCatId });
+}
+
+// 3. A purchase. Pass the purchase SDK's product and transaction objects as
+//    they are: they are forwarded whole, and the product id is read from
+//    `product.productIdentifier` unless you pass `productId`.
+export async function onPurchase(
+  product: { productIdentifier: string },
+  transaction: { originalTransactionIdentifier: string },
+  price: number,
+  currency: string,
+  isTrial: boolean,
+) {
+  const originalTransactionIdentifier = transaction.originalTransactionIdentifier;
+  await rocalytics.trackPurchase({ isTrial, value: price, currency, originalTransactionIdentifier, product, transaction });
+  // The id Rocalytics uses when it forwards the conversion, to deduplicate it
+  // against one the app sends to an ad network itself.
+  return getEventId("purchase", { original_transaction_identifier: originalTransactionIdentifier });
+}
+
+// 4. Onboarding progress, reported through the run tracker and delivered to Rocalytics.
+export function setUpOnboardingTracking(storage: KeyValueStorage, context: () => RunContextInput) {
+  onboardingRun.configure({ sink: createRocalyticsOnboardingSink(rocalytics), context, storage });
+}
+```
+
+### API
+
+`new RocalyticsClient(options?)`. Every option is for tests or unusual hosts: `modules` (your own native modules, or `null` to run inert), `fetch`, `baseUrl`, `clock` and `onDiagnostic` (default `console.warn`).
+
+| Member | |
+|---|---|
+| `ready` | Resolves once the client has started, or has gone inert. Never rejects. |
+| `rocaId` | The device's id. Null before `ready`, and when inert. |
+| `track(name, properties?)`, `trackEvent(...)` | An analytics event: `install`, `onboarding_completed`, `purchase`, `subscription_started` or `trial_started`. |
+| `trackPurchase(params)` | `purchase`, deduplicated per original transaction. `{ isTrial, value, currency, originalTransactionIdentifier, productId?, product?, transaction?, redemptionResult? }`. |
+| `identify(identifiers)` | Attaches identifiers (`user_id`, `revenue_cat_id`, `adjust_attribution`, ...) to the identity. |
+| `trackCustomEvent(name, properties?, dedupSuffix?)` | An event with any name, passed on by the API to drive automations rather than stored as an analytics event. Deduplicated on `${rocaId}-${name}`, plus `-${dedupSuffix}` when given. |
+| `trackOnboarding(stepId, answers?, metadata?)` | The pre-v1 onboarding calls, unchanged. Resends every step seen so far. |
+| `getDemandScore(signals?)` | The server's 1 to 100 demand score for this install. Rejects when the client is inert. |
+
+A method whose request gets a non-2xx answer rejects with `[ROCALYTICS] <endpoint> failed: <status>`, as the copied client did. The client never logs a request, its response or purchase properties. The only thing it reports is why it went inert or why start-up failed, through `onDiagnostic`, which defaults to `console.warn`. The request builders (`buildTrackRequest`, `buildIdentifyRequest`, `buildOnboardingResponseRequest`, `buildDemandScoreRequest`) and `getEventId` are exported as pure functions.
+
+**Onboarding runs.** `createRocalyticsOnboardingSink(client)` is a sink for the tracker. The Rocalytics ingest reads only the pre-v1 onboarding payload, so each snapshot is mapped onto it (`toOnboardingResponsePayload`):
+
+- Entries become `responses`, with `step_key` as `step_id`.
+- Answers become `{ [questionKey]: value }`. A numeric answer's unit is dropped, because that shape has no place for it.
+- `onboarding_metadata` carries the keys the [contract's section 9](docs/onboarding-run-contract.md#9-pre-v1-payloads-d22-d23) reads back: `onboardingId` (or `onboarding_id`, set to the onboarding key, for a run with no Studio onboarding), `audienceId`, `deployment_id`, `locale` from the run's context, and `draft: true` for a draft. It also carries `onboarding_key`, `onboarding_version`, `variant_key`, `run_id` and `seq`.
+- `sent_at` is the run's latest recorded timestamp plus `seq` milliseconds, not the device's send time. The ingest keeps one snapshot per roca id and replaces it only with a strictly later `sent_at`, so two sends in the same millisecond, or a device clock stepping back, would otherwise lose a snapshot. This value rises with every send **within a run**, and a retry resends the identical body. Across runs it does not help. If the device clock steps back between two runs, the next run's snapshots can be dropped silently: about the first span of that run equal to the step, or all of it if the run is shorter. The sink cannot tell a stored 2xx from a dropped one. Pre-v1 reporting had the same limit.
+
+**Completion.** Consumers of the pre-v1 data read completion from the `onboarding_completed` event, not from the snapshot. So once a completed snapshot is accepted, the sink also sends `track("onboarding_completed")`, once per run. Its deduplication id is run-scoped, `${rocaId}-onboarding_completed-${run_id}`. Each completed run on a device produces its own event, a replay included, and a resend of the same run's completion, even after a relaunch, is deduplicated. If it fails, the send counts as transient, and the tracker's retry sends it. Do not also send `onboarding_completed` yourself for a flow reported through the sink.
+
+**Answers.** An answer is stored under its step id and `question_key`. A consumer that reads one particular answer finds it only if the flow keeps the same step key and `questionKey` its previous reporting used. When you move a flow from `trackOnboarding` to the tracker, reuse those ids.
+
+The ingest keeps one onboarding per roca id, so report a flow through the sink or through `trackOnboarding`, not both.
+
+That endpoint answers success with a 2xx and no body, so a 2xx is accepted. Otherwise the contract's rule applies: only a body saying `{"outcome": "rejected"}` is permanent, and every other answer is transient and retried. That includes a 400 without such a body, and a 404. Every send waits for `ready`, so a 404 (no identity for this roca id) means the start-up identify failed in this session. The retries stop failing once an identify succeeds, at the next launch or through the app's own `identify()` call.
+
+**Known limits.**
+
+- **A late completion can be credited to the next run.** The app may be killed before the completed snapshot is sent, then start a new run on relaunch. When the stored snapshot is finally delivered, its `onboarding_completed` event arrives during the new run, so a consumer that matches the event to the row by time can credit the completion to the new run.
+- **A permanently failing completion event is retried forever.** If `/track` permanently refuses `onboarding_completed`, the completed snapshot's send stays transient and is retried at the tracker's maximum backoff, about once a minute, for as long as the app runs.
+
+### Migrating from a copied `rocalytics.client.ts`
+
+1. Install the package and the peers above, then delete the copied file.
+2. Import from `@rocapine/studio-sdk/rocalytics` instead. The class and type names are unchanged (`RocalyticsClient`, `TrackPurchaseParams`, `IdentifyParams`, `DemandScoreResult`, `OnboardingStepAnswers`, ...).
+3. Keep creating the client once, at startup.
+4. Check the rows below that apply to your copy.
+
+| If your copy | Then |
+|---|---|
+| stored the id under `rocalitics-roca-id` | Nothing to do. The id is now read from `rocalytics-roca-id`. On the first launch, a device with only the old key keeps its id, which is copied to the new key. The old key is left in place, and a newly minted id is written under both keys, so a bundle rolled back to the copied client reads the same id. A device never gets a new id while either key holds one. |
+| recorded the install under `rocadata-install-tracked-4` | Nothing to do. Either install key counts as "install sent", so no device sends `install` twice. |
+| imported the Expo modules at the top of the file | Nothing to do. The modules now load lazily, and a missing native module makes the client inert instead of crashing the launch. |
+| took `{ product, transaction }`, or `{ productId, redemptionResult }`, in `trackPurchase` | Both still work. `productId` defaults to `product.productIdentifier`. Product and transaction are typed as any object, so pass the purchase SDK's own types. |
+| passed `superwallEvent` to `trackPurchase`, or called `trackSuperwallEvent` | Neither is in the package: Superwall event tracking is not ported. |
+| called `getEventId(name, transactionId)` | Call `getEventId(name, { original_transaction_identifier: transactionId })`. It returns `undefined` when there is no transaction id. |
+| ran an app-specific step after start-up, such as handing the roca id to an attribution SDK | Do it in the app: `await rocalytics.ready`, then use `rocalytics.rocaId` when it is not null. |
+| logged requests or purchase properties to the console | The package logs neither. Start-up problems go to `onDiagnostic` (default `console.warn`; pass your own handler to route or silence them). A failed request still rejects. |
+| identified without `locale` at start-up | The start-up identify now sends the device locale, as the reference does. |
+| read `selectedVersion` or `versions` from `DemandScoreResult` as always present | Both are optional, so a response from before the score was versioned still fits. Check for them. |
+| mocked the copied module in Jest | Mock `@rocapine/studio-sdk/rocalytics` instead, or create the client with `modules` and `fetch` stand-ins. |
 
 ## Development
 

@@ -7,6 +7,7 @@ export default defineConfig({
     alias: {
       "@rocapine/studio-sdk/onboarding": path.resolve(__dirname, "src/onboarding/index.ts"),
       "@rocapine/studio-sdk/core": path.resolve(__dirname, "src/core/index.ts"),
+      "@rocapine/studio-sdk/rocalytics": path.resolve(__dirname, "src/rocalytics/index.ts"),
     },
   },
   test: {
