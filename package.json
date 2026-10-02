@@ -7,7 +7,8 @@
     "analytics",
     "funnel",
     "react-native",
-    "headless"
+    "headless",
+    "rocalytics"
   ],
   "author": "Rocapine",
   "license": "MIT",
@@ -25,6 +26,10 @@
       "types": "./dist/core/index.d.ts",
       "default": "./dist/core/index.js"
     },
+    "./rocalytics": {
+      "types": "./dist/rocalytics/index.d.ts",
+      "default": "./dist/rocalytics/index.js"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -34,6 +39,9 @@
       ],
       "core": [
         "./dist/core/index.d.ts"
+      ],
+      "rocalytics": [
+        "./dist/rocalytics/index.d.ts"
       ]
     }
   },
@@ -43,6 +51,7 @@
     "docs",
     "onboarding",
     "core",
+    "rocalytics",
     "README.md",
     "CHANGELOG.md"
   ],
@@ -56,6 +65,38 @@
     "test:watch": "vitest",
     "gen:schema-types": "UPDATE_SCHEMA_TYPES=1 vitest run test/schema-types.test.ts",
     "check:exports": "node scripts/check-exports.mjs"
+  },
+  "peerDependencies": {
+    "expo-application": "^7.0.0 || >=55.0.0",
+    "expo-crypto": "^15.0.0 || >=55.0.0",
+    "expo-device": "^8.0.0 || >=55.0.0",
+    "expo-modules-core": "^3.0.0 || >=55.0.0",
+    "expo-network": "^8.0.0 || >=55.0.0",
+    "expo-secure-store": "^15.0.0 || >=55.0.0",
+    "react-native": ">=0.81.0"
+  },
+  "peerDependenciesMeta": {
+    "expo-application": {
+      "optional": true
+    },
+    "expo-crypto": {
+      "optional": true
+    },
+    "expo-device": {
+      "optional": true
+    },
+    "expo-modules-core": {
+      "optional": true
+    },
+    "expo-network": {
+      "optional": true
+    },
+    "expo-secure-store": {
+      "optional": true
+    },
+    "react-native": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
