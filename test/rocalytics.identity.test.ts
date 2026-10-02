@@ -23,13 +23,28 @@ function start(store: FakeSecureStore, device = IOS) {
 }
 
 describe("the roca id: migration from the misspelled key", () => {
-  it("a fresh device mints an id and writes it under the corrected key only", async () => {
+  it("a fresh device mints an id and writes it under both keys, so a rolled-back bundle still running a copied client reads the same id", async () => {
     const store = new FakeSecureStore();
     const { client } = start(store);
     await client.ready;
     expect(client.rocaId).toBe(ROCA_ID);
+    expect(store.writes.slice(0, 2)).toEqual([
+      [KEY, ROCA_ID],
+      [LEGACY_KEY, ROCA_ID],
+    ]);
+    // What a copied client does on launch: read the misspelled key, mint only if it is empty.
+    const copiedClientId = (await store.getItemAsync(LEGACY_KEY)) ?? "a-new-id";
+    expect(copiedClientId).toBe(ROCA_ID);
+  });
+
+  it("keeps the minted id when writing it to the legacy key fails, and reports it", async () => {
+    const store = new FakeSecureStore();
+    store.failWrites.add(LEGACY_KEY);
+    const { client, diagnostics } = start(store);
+    await client.ready;
+    expect(client.rocaId).toBe(ROCA_ID);
     expect(store.map.get(KEY)).toBe(ROCA_ID);
-    expect(store.map.has(LEGACY_KEY)).toBe(false);
+    expect(diagnostics.map((d) => d.code)).toContain("identity-legacy-write-failed");
   });
 
   it("a device holding only the legacy key keeps its id, copies it to the corrected key, and leaves the legacy key in place", async () => {
@@ -141,6 +156,30 @@ describe("an inert client", () => {
     expect(diagnostics.map((d) => [d.code, d.message])).toEqual([["init-failed", "[ROCALYTICS] identify failed: 503"]]);
     // The id was obtained before identify failed, so later events still go out (as the reference does).
     expect(client.rocaId).toBe(ROCA_ID);
+  });
+});
+
+describe("trackPurchase", () => {
+  it("with only productId sends no experimental key at all", async () => {
+    const store = new FakeSecureStore({ [KEY]: ROCA_ID, "rocadata-install-tracked": "true" });
+    const { client, http } = start(store);
+    await client.trackPurchase({ isTrial: false, value: 9.99, currency: "EUR", originalTransactionIdentifier: "t-1", productId: "pro_monthly" });
+    const body = http.requests[http.requests.length - 1].body as { properties: Record<string, unknown> };
+    expect(body.properties).toEqual({
+      is_trial: false,
+      original_transaction_identifier: "t-1",
+      product_id: "pro_monthly",
+      price: 9.99,
+      currency_code: "EUR",
+    });
+  });
+
+  it("forwards only the raw objects it was given under experimental", async () => {
+    const store = new FakeSecureStore({ [KEY]: ROCA_ID, "rocadata-install-tracked": "true" });
+    const { client, http } = start(store);
+    await client.trackPurchase({ isTrial: true, value: 0, currency: "EUR", originalTransactionIdentifier: "t-2", productId: "p", redemptionResult: { code: "abc" } });
+    const body = http.requests[http.requests.length - 1].body as { properties: Record<string, unknown> };
+    expect(body.properties.experimental).toEqual({ redemption_result: { code: "abc" } });
   });
 });
 

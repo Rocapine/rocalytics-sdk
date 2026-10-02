@@ -5,41 +5,50 @@ import type { OnboardingMetadata, OnboardingResponsePayload, OnboardingStepAnswe
 
 /**
  * A v1 onboarding run snapshot in the pre-v1 `/onboarding-response` shape,
- * which is the only onboarding payload the Rocalytics ingest reads.
+ * which is the only onboarding payload the Rocalytics ingest reads. The keys
+ * follow docs/onboarding-run-contract.md, section 9, which is how the ingest
+ * reads such a payload back into a run.
  *
  * - Each entry is a response: `step_key` becomes `step_id`, timestamps are kept.
  * - Answers become `{ [question_key]: value }`. A numeric answer's `unit` has
  *   no place in that shape and is dropped.
- * - `onboarding_metadata` carries the Studio links under the keys the pre-v1
- *   payload used (`onboarding_id`, `deployment_id`, `audience_id`), plus the
- *   run's identity: `onboarding_key`, `onboarding_version`, `variant_key`,
- *   `run_id`, `seq`, `status`, `schema_version`, `started_at`,
- *   `completed_at`, `truncated` and `properties`, each only when present.
- * - `sent_at` is the snapshot's. A retry resends the same body, so the
- *   ingest, which ignores a snapshot older than the one it holds, drops it.
+ * - `onboarding_metadata` carries the keys section 9 reads: `onboardingId`
+ *   (the Studio onboarding) or, with none, `onboarding_id` (the onboarding
+ *   key, as a hand-coded sender sets it), `audienceId`, `deployment_id`,
+ *   `locale` (from the run's context) and `draft: true` for a draft. It also
+ *   carries `onboarding_key`, `onboarding_version`, `variant_key`, `run_id`
+ *   and `seq`, which section 9 does not read.
+ * - `sent_at` is NOT the device's send time. The ingest keeps one snapshot
+ *   per sender and replaces it only when the incoming `sent_at` is strictly
+ *   later, answering 2xx either way, so two sends in one millisecond, or a
+ *   device clock stepping back, would drop a snapshot (the completion
+ *   included) while it reads as delivered. So `sent_at` is the run's latest
+ *   recorded timestamp plus `seq` milliseconds. A snapshot only ever adds
+ *   timestamps to the one before it and `seq` rises with every send, so this
+ *   strictly increases across a run's sends whatever the device clock does.
+ *   It depends on the snapshot alone, so a retry, even after a relaunch,
+ *   resends the identical body.
  */
 export function toOnboardingResponsePayload(snapshot: OnboardingRunSnapshot): OnboardingResponsePayload {
   const metadata: OnboardingMetadata = {};
   const set = (key: string, value: unknown) => {
     if (value !== undefined && value !== null) metadata[key] = value;
   };
-  set("onboarding_id", snapshot.studio?.onboarding_id);
+  const studioOnboardingId = snapshot.studio?.onboarding_id;
+  if (studioOnboardingId != null) set("onboardingId", studioOnboardingId);
+  else set("onboarding_id", snapshot.onboarding.key);
+  set("audienceId", snapshot.studio?.audience_id);
   set("deployment_id", snapshot.studio?.deployment_id);
-  set("audience_id", snapshot.studio?.audience_id);
+  set("locale", snapshot.context.locale);
+  if (snapshot.onboarding.version === "draft") set("draft", true);
   set("onboarding_key", snapshot.onboarding.key);
   set("onboarding_version", snapshot.onboarding.version);
   set("variant_key", snapshot.onboarding.variant_key);
   set("run_id", snapshot.run_id);
   set("seq", snapshot.seq);
-  set("status", snapshot.status);
-  set("schema_version", snapshot.schema_version);
-  set("started_at", snapshot.started_at);
-  set("completed_at", snapshot.completed_at);
-  set("truncated", snapshot.truncated);
-  if (snapshot.properties) set("properties", { ...snapshot.properties });
   return {
     onboarding_metadata: metadata,
-    sent_at: snapshot.sent_at,
+    sent_at: new Date(latestRecorded(snapshot) + snapshot.seq).toISOString(),
     responses: snapshot.steps.map((entry) => ({
       step_id: entry.step_key,
       entered_at: entry.entered_at,
@@ -49,6 +58,20 @@ export function toOnboardingResponsePayload(snapshot: OnboardingRunSnapshot): On
   };
 }
 
+/** The latest timestamp the run has recorded: its start, entries, exits and completion. Not `sent_at`. */
+function latestRecorded(snapshot: OnboardingRunSnapshot): number {
+  let latest = Date.parse(snapshot.started_at);
+  const consider = (ts: string | null) => {
+    if (ts !== null) latest = Math.max(latest, Date.parse(ts));
+  };
+  for (const entry of snapshot.steps) {
+    consider(entry.entered_at);
+    consider(entry.exited_at);
+  }
+  consider(snapshot.completed_at);
+  return latest;
+}
+
 function toAnswers(answers: Answer[]): OnboardingStepAnswers {
   const out: OnboardingStepAnswers = {};
   for (const answer of answers) out[answer.question_key] = Array.isArray(answer.value) ? [...answer.value] : answer.value;
@@ -56,18 +79,18 @@ function toAnswers(answers: Answer[]): OnboardingStepAnswers {
 }
 
 /**
- * Reads `/onboarding-response`'s status as a sink outcome. That endpoint
- * answers with a status and no outcome body, so unlike `createHttpSink` this
- * reads the status:
- *
- * - 2xx: accepted (the ingest stores it, or drops it as a stale retry);
- * - 400 and 405: rejected, since resending the same body cannot succeed;
- * - anything else, 404 included: transient. A 404 means the identity does
- *   not exist yet because `/identify` has not landed, which a retry fixes.
+ * Reads an `/onboarding-response` answer as a sink outcome. The endpoint
+ * answers success with a 2xx and no body, so a 2xx is accepted. Otherwise,
+ * as the contract's section 5 requires, only a body that says
+ * `{"outcome": "rejected"}` is permanent: every other status, whatever its
+ * body, is transient and the snapshot is retried.
  */
-export function rocalyticsOutcome(status: number): SinkResult {
+export function rocalyticsOutcome(status: number, body?: unknown): SinkResult {
   if (status >= 200 && status < 300) return { outcome: "accepted" };
-  if (status === 400 || status === 405) return { outcome: "rejected", reason: `status ${status}` };
+  if (body && typeof body === "object" && (body as { outcome?: unknown }).outcome === "rejected") {
+    const reason = (body as { reason?: unknown }).reason;
+    return typeof reason === "string" ? { outcome: "rejected", reason } : { outcome: "rejected" };
+  }
   return { outcome: "transient", reason: `status ${status}` };
 }
 
@@ -75,6 +98,11 @@ export function rocalyticsOutcome(status: number): SinkResult {
  * A sink for the onboarding run tracker (`@rocapine/studio-sdk/onboarding`)
  * that delivers each snapshot to Rocalytics through `client`, as the pre-v1
  * onboarding payload (see `toOnboardingResponsePayload`).
+ *
+ * Once a completed snapshot is accepted, the sink also sends the
+ * `onboarding_completed` event, which is where consumers of the pre-v1 data
+ * read completion from. It is deduplicated per device, like any `track`
+ * event; if it fails, the send is transient, so the tracker's retry sends it.
  *
  * The ingest keeps one onboarding snapshot per roca id, so a new run replaces
  * the previous one there, and an app should report a flow through this sink

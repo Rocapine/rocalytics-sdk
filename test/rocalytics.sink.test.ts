@@ -1,27 +1,78 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createOnboardingRunTracker, type OnboardingRunSnapshot } from "../src/onboarding";
+import { createOnboardingRunTracker, type OnboardingRunSnapshot, type Sink } from "../src/onboarding";
 import {
   RocalyticsClient,
   createRocalyticsOnboardingSink,
   rocalyticsOutcome,
   toOnboardingResponsePayload,
+  type FetchLike,
   type OnboardingResponsePayload,
 } from "../src/rocalytics";
 import { assertConformant } from "./contract";
 import { ManualTime } from "./fakes";
 import { CONTEXT } from "./harness";
-import { FakeSecureStore, IOS, ROCA_ID, fakeModules, recordingFetch, stubIntl } from "./rocalytics.fakes";
+import { FakeSecureStore, IOS, ROCA_ID, fakeModules, stubIntl } from "./rocalytics.fakes";
 
-// The run tracker's snapshots, delivered to Rocalytics. The Rocalytics ingest
-// only knows the pre-v1 onboarding payload (`/onboarding-response`), so the
-// sink maps each v1 snapshot onto it, and reads the HTTP status, since that
-// endpoint answers with a status and no outcome body.
+// The run tracker's snapshots, delivered to Rocalytics. The ingest only reads
+// the pre-v1 onboarding payload, so the sink maps each v1 snapshot onto it
+// (docs/onboarding-run-contract.md, section 9 describes how the ingest reads
+// it back).
+//
+// The fake ingest below models the two behaviours the sink has to live with:
+// it keeps ONE onboarding row per sender, replaced only when the incoming
+// `sent_at` is STRICTLY later than the stored one, and it answers 2xx whether
+// it stored the snapshot or dropped it.
 
 let restoreIntl: () => void;
 beforeEach(() => {
   restoreIntl = stubIntl(IOS);
 });
 afterEach(() => restoreIntl());
+
+type Reply = { status: number; json?: unknown };
+
+function fakeIngest(options: { onboarding?: (call: number) => Reply; track?: (call: number) => Reply } = {}) {
+  const rows = new Map<string, OnboardingResponsePayload>();
+  const posted: OnboardingResponsePayload[] = [];
+  const events: { name: string; deduplication_id: string; properties: unknown }[] = [];
+  const order: string[] = [];
+  let onboardingCalls = 0;
+  let trackCalls = 0;
+  const reply = ({ status, json }: Reply) => ({
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => {
+      if (json === undefined) throw new SyntaxError("Unexpected end of JSON input");
+      return json;
+    },
+  });
+  const fetch: FetchLike = async (url, init) => {
+    const path = new URL(url).pathname;
+    const body = init.body === undefined ? undefined : JSON.parse(init.body);
+    order.push(path);
+    if (path === "/functions/v1/identify") return reply({ status: 200, json: {} });
+    if (path === "/functions/v1/track") {
+      const r = options.track?.(++trackCalls) ?? { status: 204 };
+      if (r.status < 300) events.push(body);
+      return reply(r);
+    }
+    if (path === "/functions/v1/onboarding-response") {
+      const r = options.onboarding?.(++onboardingCalls) ?? { status: 204 };
+      posted.push(body);
+      if (r.status < 300) {
+        const sender = init.headers["X-Roca-ID"];
+        const stored = rows.get(sender);
+        if (!stored || Date.parse(body.sent_at) > Date.parse(stored.sent_at)) rows.set(sender, body);
+      }
+      return reply(r);
+    }
+    return reply({ status: 404 });
+  };
+  return { fetch, posted, events, order, row: () => rows.get(ROCA_ID) };
+}
+
+const RETURNING = () => new FakeSecureStore({ "rocalytics-roca-id": ROCA_ID, "rocadata-install-tracked": "true" });
+const clientFor = (fetch: FetchLike) => new RocalyticsClient({ modules: fakeModules(IOS, RETURNING()), fetch, onDiagnostic: () => {} });
 
 const COMPLETED: OnboardingRunSnapshot = {
   schema_version: 1,
@@ -33,7 +84,7 @@ const COMPLETED: OnboardingRunSnapshot = {
   completed_at: "2026-01-10T08:00:40.000Z",
   onboarding: { key: "main", version: "3", variant_key: "short-intro" },
   studio: { onboarding_id: "onb_123", deployment_id: "dep_789", audience_id: null },
-  context: { ...{ app_version: "2.4.0", build: "412", platform: "ios", os_version: "18.1", locale: "en-US", timezone: "Europe/Paris" }, library_version: "0.1.0" },
+  context: { app_version: "2.4.0", build: "412", platform: "ios", os_version: "18.1", locale: "en-US", timezone: "Europe/Paris", library_version: "0.1.0" },
   manifest: { steps: [{ step_key: "welcome" }, { step_key: "goal" }, { step_key: "interests" }, { step_key: "minutes" }, { step_key: "done" }] },
   properties: { signup_source: "email" },
   steps: [
@@ -63,25 +114,34 @@ const COMPLETED: OnboardingRunSnapshot = {
   ],
 };
 
+const IN_PROGRESS: OnboardingRunSnapshot = (() => {
+  const { studio: _studio, properties: _properties, ...rest } = COMPLETED;
+  return {
+    ...rest,
+    onboarding: { key: "main", version: "3" },
+    status: "in_progress",
+    completed_at: null,
+    truncated: true,
+    steps: [{ step_key: "welcome", entered_at: "2026-01-10T08:00:00.000Z", exited_at: null, answers: [] }],
+  };
+})();
+
 describe("toOnboardingResponsePayload: a v1 run snapshot in the pre-v1 shape", () => {
-  it("maps entries to responses, answers to a value per question, and the run's identity to onboarding_metadata", () => {
+  it("maps entries to responses, answers to a value per question, and the run to section 9's metadata keys", () => {
     assertConformant(COMPLETED);
     const expected: OnboardingResponsePayload = {
       onboarding_metadata: {
-        onboarding_id: "onb_123",
+        onboardingId: "onb_123",
         deployment_id: "dep_789",
+        locale: "en-US",
         onboarding_key: "main",
         onboarding_version: "3",
         variant_key: "short-intro",
         run_id: "0190a8c4-4b2e-7c1a-9f3d-2e5b6c7d8e9f",
         seq: 4,
-        status: "completed",
-        schema_version: 1,
-        started_at: "2026-01-10T08:00:00.000Z",
-        completed_at: "2026-01-10T08:00:40.000Z",
-        properties: { signup_source: "email" },
       },
-      sent_at: "2026-01-10T08:00:40.000Z",
+      // The latest recorded moment (completed_at) plus seq (4) milliseconds.
+      sent_at: "2026-01-10T08:00:40.004Z",
       responses: [
         { step_id: "welcome", entered_at: "2026-01-10T08:00:00.000Z", exited_at: "2026-01-10T08:00:10.000Z", answers: {} },
         { step_id: "goal", entered_at: "2026-01-10T08:00:10.000Z", exited_at: "2026-01-10T08:00:20.000Z", answers: { goal: "lose_weight" } },
@@ -98,31 +158,37 @@ describe("toOnboardingResponsePayload: a v1 run snapshot in the pre-v1 shape", (
     expect(toOnboardingResponsePayload(COMPLETED)).toEqual(expected);
   });
 
-  it("leaves out what the run does not have: no Studio links, no variant, no properties, not completed, truncated", () => {
-    const { studio: _studio, properties: _properties, ...rest } = COMPLETED;
-    const inProgress: OnboardingRunSnapshot = {
-      ...rest,
-      onboarding: { key: "main", version: "3" },
-      status: "in_progress",
-      completed_at: null,
-      truncated: true,
-      steps: [{ step_key: "welcome", entered_at: "2026-01-10T08:00:00.000Z", exited_at: null, answers: [] }],
-    };
-    assertConformant(inProgress);
-    expect(toOnboardingResponsePayload(inProgress)).toEqual({
+  it("a run with no Studio onboarding id is attributed through onboarding_id, which section 9 reads for a hand-coded sender", () => {
+    assertConformant(IN_PROGRESS);
+    expect(toOnboardingResponsePayload(IN_PROGRESS)).toEqual({
       onboarding_metadata: {
+        onboarding_id: "main",
+        locale: "en-US",
         onboarding_key: "main",
         onboarding_version: "3",
         run_id: COMPLETED.run_id,
         seq: 4,
-        status: "in_progress",
-        schema_version: 1,
-        started_at: "2026-01-10T08:00:00.000Z",
-        truncated: true,
       },
-      sent_at: COMPLETED.sent_at,
+      sent_at: "2026-01-10T08:00:00.004Z",
       responses: [{ step_id: "welcome", entered_at: "2026-01-10T08:00:00.000Z", exited_at: null, answers: {} }],
     });
+  });
+
+  it("sends audienceId when the run has an audience, and draft: true for a draft", () => {
+    const draft: OnboardingRunSnapshot = {
+      ...COMPLETED,
+      onboarding: { key: "onb_123", version: "draft" },
+      studio: { onboarding_id: "onb_123", audience_id: "aud_456" },
+    };
+    assertConformant(draft);
+    const { onboarding_metadata } = toOnboardingResponsePayload(draft);
+    expect(onboarding_metadata).toMatchObject({ onboardingId: "onb_123", audienceId: "aud_456", draft: true, onboarding_version: "draft" });
+    expect(onboarding_metadata).not.toHaveProperty("deployment_id");
+    expect(toOnboardingResponsePayload(COMPLETED).onboarding_metadata).not.toHaveProperty("draft");
+  });
+
+  it("depends on the snapshot alone, so a resend after a relaunch carries the identical body", () => {
+    expect(JSON.stringify(toOnboardingResponsePayload(COMPLETED))).toBe(JSON.stringify(toOnboardingResponsePayload(structuredClone(COMPLETED))));
   });
 
   it("does not share arrays with the snapshot", () => {
@@ -132,96 +198,187 @@ describe("toOnboardingResponsePayload: a v1 run snapshot in the pre-v1 shape", (
   });
 });
 
-describe("rocalyticsOutcome: the endpoint's status codes as sink outcomes", () => {
+describe("rocalyticsOutcome: only an explicit rejection body is permanent", () => {
   it.each([
-    [204, "accepted"],
-    [200, "accepted"],
-    [400, "rejected"],
-    [405, "rejected"],
-    [404, "transient"], // identify has not created the identity yet
-    [408, "transient"],
-    [429, "transient"],
-    [500, "transient"],
-    [503, "transient"],
-  ])("%i -> %s", (status, outcome) => {
-    expect(rocalyticsOutcome(status).outcome).toBe(outcome);
+    [204, undefined, "accepted"],
+    [200, {}, "accepted"],
+    [400, undefined, "transient"],
+    [400, { error: "responses must be an array" }, "transient"],
+    [400, { outcome: "rejected", reason: "too large" }, "rejected"],
+    [413, { outcome: "rejected" }, "rejected"],
+    [404, undefined, "transient"],
+    [405, undefined, "transient"],
+    [500, { error: "boom" }, "transient"],
+    [503, undefined, "transient"],
+  ] as const)("%i with body %j -> %s", (status, body, outcome) => {
+    expect(rocalyticsOutcome(status, body).outcome).toBe(outcome);
+  });
+
+  it("keeps the rejection's reason", () => {
+    expect(rocalyticsOutcome(400, { outcome: "rejected", reason: "too large" })).toEqual({ outcome: "rejected", reason: "too large" });
   });
 });
 
 describe("createRocalyticsOnboardingSink", () => {
-  const client = (respond: Record<string, { status: number }> = {}, store = new FakeSecureStore({ "rocalytics-roca-id": ROCA_ID, "rocadata-install-tracked": "true" })) => {
-    const http = recordingFetch(respond);
-    return { http, client: new RocalyticsClient({ modules: fakeModules(IOS, store), fetch: http.fetch, onDiagnostic: () => {} }) };
-  };
-
   it("POSTs the mapped snapshot to /onboarding-response with the client's headers, after the client is ready", async () => {
-    const { client: c, http } = client();
-    const result = await createRocalyticsOnboardingSink(c).send(COMPLETED);
+    const ingest = fakeIngest();
+    const result = await createRocalyticsOnboardingSink(clientFor(ingest.fetch)).send(IN_PROGRESS);
     expect(result).toEqual({ outcome: "accepted" });
-    expect(http.paths()).toEqual(["/functions/v1/identify", "/functions/v1/onboarding-response"]);
-    const request = http.requests[1];
-    expect(request.headers).toEqual({ "Content-Type": "application/json", "X-Roca-ID": ROCA_ID, "X-Application-ID": "com.example.app", "X-Platform": "ios" });
-    expect(request.body).toEqual(toOnboardingResponsePayload(COMPLETED));
+    expect(ingest.order).toEqual(["/functions/v1/identify", "/functions/v1/onboarding-response"]);
+    expect(ingest.posted).toEqual([toOnboardingResponsePayload(IN_PROGRESS)]);
   });
 
-  it("reports a 400 as rejected, with the status as the reason", async () => {
-    const { client: c } = client({ "/functions/v1/onboarding-response": { status: 400 } });
-    expect(await createRocalyticsOnboardingSink(c).send(COMPLETED)).toEqual({ outcome: "rejected", reason: "status 400" });
+  it("a 400 is transient unless its body is an explicit rejection", async () => {
+    const plain = fakeIngest({ onboarding: () => ({ status: 400, json: { error: "bad" } }) });
+    expect((await createRocalyticsOnboardingSink(clientFor(plain.fetch)).send(IN_PROGRESS)).outcome).toBe("transient");
+    const explicit = fakeIngest({ onboarding: () => ({ status: 400, json: { outcome: "rejected", reason: "schema" } }) });
+    expect(await createRocalyticsOnboardingSink(clientFor(explicit.fetch)).send(IN_PROGRESS)).toEqual({ outcome: "rejected", reason: "schema" });
   });
 
   it("reports a network failure as transient", async () => {
-    const c = new RocalyticsClient({
-      modules: fakeModules(IOS, new FakeSecureStore({ "rocalytics-roca-id": ROCA_ID, "rocadata-install-tracked": "true" })),
-      fetch: async (url) => {
-        if (url.endsWith("/identify")) return { ok: true, status: 200, json: async () => ({}) };
-        throw new TypeError("Network request failed");
-      },
-      onDiagnostic: () => {},
+    const ingest = fakeIngest();
+    const c = clientFor(async (url, init) => {
+      if (url.endsWith("/identify")) return ingest.fetch(url, init);
+      throw new TypeError("Network request failed");
     });
     expect(await createRocalyticsOnboardingSink(c).send(COMPLETED)).toEqual({ outcome: "transient", reason: "TypeError: Network request failed" });
   });
 
   it("an inert client sends nothing and answers transient, so the tracker keeps the snapshot for the next launch", async () => {
-    const http = recordingFetch();
-    const c = new RocalyticsClient({ modules: null, fetch: http.fetch, onDiagnostic: () => {} });
+    const ingest = fakeIngest();
+    const c = new RocalyticsClient({ modules: null, fetch: ingest.fetch, onDiagnostic: () => {} });
     expect(await createRocalyticsOnboardingSink(c).send(COMPLETED)).toEqual({ outcome: "transient", reason: "the Rocalytics client is inert" });
-    expect(http.requests).toEqual([]);
+    expect(ingest.order).toEqual([]);
+  });
+});
+
+describe("completion: the onboarding_completed event", () => {
+  it("fires once the completed snapshot is accepted, with the default deduplication id, and not for an in-progress one", async () => {
+    const ingest = fakeIngest();
+    const sink = createRocalyticsOnboardingSink(clientFor(ingest.fetch));
+    await sink.send(IN_PROGRESS);
+    expect(ingest.events).toEqual([]);
+    expect(await sink.send(COMPLETED)).toEqual({ outcome: "accepted" });
+    expect(ingest.events).toEqual([{ name: "onboarding_completed", deduplication_id: `${ROCA_ID}-onboarding_completed`, properties: {}, device_context: expect.any(Object) }]);
+    expect(ingest.order.slice(-2)).toEqual(["/functions/v1/onboarding-response", "/functions/v1/track"]);
   });
 
-  it("carries a hand-coded run from the tracker to Rocalytics, ending on the completed snapshot", async () => {
-    const { client: c, http } = client();
+  it("does not fire twice when the completed snapshot is sent again", async () => {
+    const ingest = fakeIngest();
+    const sink = createRocalyticsOnboardingSink(clientFor(ingest.fetch));
+    await sink.send(COMPLETED);
+    await sink.send(COMPLETED);
+    expect(ingest.order.filter((p) => p.endsWith("/track"))).toHaveLength(1);
+  });
+
+  it("when the event fails the send is transient, and the retry fires it", async () => {
+    const ingest = fakeIngest({ track: (n) => ({ status: n === 1 ? 503 : 204 }) });
+    const sink = createRocalyticsOnboardingSink(clientFor(ingest.fetch));
+    expect((await sink.send(COMPLETED)).outcome).toBe("transient");
+    expect(ingest.events).toEqual([]);
+    expect(await sink.send(COMPLETED)).toEqual({ outcome: "accepted" });
+    expect(ingest.events.map((e) => e.name)).toEqual(["onboarding_completed"]);
+  });
+
+  it("does not fire for a completed snapshot the ingest explicitly rejects", async () => {
+    const ingest = fakeIngest({ onboarding: () => ({ status: 400, json: { outcome: "rejected" } }) });
+    await createRocalyticsOnboardingSink(clientFor(ingest.fetch)).send(COMPLETED);
+    expect(ingest.order.filter((p) => p.endsWith("/track"))).toEqual([]);
+  });
+});
+
+describe("end to end: the tracker through the sink into an ingest that keeps only a strictly later sent_at", () => {
+  function setUp(skew = { ms: 0 }) {
+    const ingest = fakeIngest();
+    const client = clientFor(ingest.fetch);
     const time = new ManualTime();
+    const snapshots: OnboardingRunSnapshot[] = [];
+    const inner = createRocalyticsOnboardingSink(client);
+    const sink: Sink<OnboardingRunSnapshot> = {
+      send: (s) => {
+        snapshots.push(structuredClone(s));
+        return inner.send(s);
+      },
+    };
     const tracker = createOnboardingRunTracker({
-      sink: createRocalyticsOnboardingSink(c),
+      sink,
       context: CONTEXT,
-      clock: time.clock,
+      clock: { now: () => time.clock.now() - skew.ms },
       timers: time.timers,
       debounceMs: 0,
       onDiagnostic: () => {},
     });
-    const run = tracker.start({ onboarding: { key: "main", version: "3" }, manifest: { steps: [{ stepKey: "welcome" }, { stepKey: "goal" }] } });
-    run.enterStep("welcome");
-    await time.advance(1000);
-    run.exitStep("welcome");
-    run.enterStep("goal");
-    await time.advance(1000);
-    run.exitStep("goal", { answers: [{ questionKey: "goal", kind: "single", value: "learn" }] });
-    run.complete();
-    await time.advance(0);
-    await c.ready;
-    await time.advance(0);
+    const run = tracker.start({
+      onboarding: { key: "main", version: "3" },
+      manifest: { steps: [{ stepKey: "welcome" }, { stepKey: "goal" }, { stepKey: "done" }] },
+    });
+    const settle = async () => {
+      await client.ready;
+      for (let i = 0; i < 5; i++) await time.advance(0);
+    };
+    const finalSnapshot = () => snapshots[snapshots.length - 1];
+    return { ingest, time, run, tracker, settle, finalSnapshot, snapshots };
+  }
 
-    const sent = http.requests.filter((r) => r.url.endsWith("/onboarding-response")).map((r) => r.body as OnboardingResponsePayload);
-    expect(sent.length).toBeGreaterThan(0);
-    const last = sent[sent.length - 1];
-    expect(last.onboarding_metadata).toMatchObject({ onboarding_key: "main", onboarding_version: "3", status: "completed", run_id: run.runId });
-    expect(last.responses.map((r) => [r.step_id, r.answers])).toEqual([
+  const expectCompletedStored = (s: ReturnType<typeof setUp>) => {
+    const last = s.finalSnapshot();
+    expect(last.status).toBe("completed");
+    expect(s.ingest.row()).toEqual(toOnboardingResponsePayload(last));
+    expect(s.ingest.events.map((e) => e.name)).toEqual(["onboarding_completed"]);
+    // Every distinct snapshot went out with a strictly later sent_at than the one before.
+    const bySeq = new Map(s.ingest.posted.map((p) => [p.onboarding_metadata!.seq as number, Date.parse(p.sent_at)]));
+    const times = [...bySeq.entries()].sort(([a], [b]) => a - b).map(([, t]) => t);
+    for (let i = 1; i < times.length; i++) expect(times[i]).toBeGreaterThan(times[i - 1]);
+  };
+
+  it("exitStep then complete in the same millisecond stores the completed run", async () => {
+    const s = setUp();
+    s.run.enterStep("welcome");
+    await s.time.advance(1000);
+    s.run.exitStep("welcome");
+    s.run.enterStep("goal");
+    await s.time.advance(1000);
+    s.run.exitStep("goal", { answers: [{ questionKey: "goal", kind: "single", value: "learn" }] });
+    s.run.complete();
+    await s.settle();
+    expectCompletedStored(s);
+    expect(s.ingest.row()!.responses.map((r) => [r.step_id, r.answers])).toEqual([
       ["welcome", {}],
       ["goal", { goal: "learn" }],
     ]);
-    // The ingest drops a snapshot older than the one it holds, so sent_at must never go backwards.
-    const sentAt = sent.map((p) => Date.parse(p.sent_at));
-    expect([...sentAt].sort((a, b) => a - b)).toEqual(sentAt);
-    tracker.dispose();
+    s.tracker.dispose();
+  });
+
+  it("background then complete in the same millisecond stores the completed run", async () => {
+    const s = setUp();
+    s.run.enterStep("welcome");
+    await s.time.advance(1000);
+    s.run.exitStep("welcome");
+    s.run.enterStep("done");
+    await s.settle();
+    s.run.background();
+    s.run.complete();
+    await s.settle();
+    expectCompletedStored(s);
+    s.tracker.dispose();
+  });
+
+  it("a device clock stepping back 60 s mid-run still stores the completed run", async () => {
+    const skew = { ms: 0 };
+    const s = setUp(skew);
+    s.run.enterStep("welcome");
+    await s.time.advance(5000);
+    s.run.exitStep("welcome");
+    s.run.enterStep("goal");
+    await s.settle();
+    skew.ms = 60_000;
+    await s.time.advance(1000);
+    s.run.exitStep("goal");
+    s.run.enterStep("done");
+    await s.time.advance(1000);
+    s.run.complete();
+    await s.settle();
+    expectCompletedStored(s);
+    s.tracker.dispose();
   });
 });

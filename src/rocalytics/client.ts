@@ -83,6 +83,8 @@ export class RocalyticsClient {
   private deviceContext: DeviceContext | null = null;
   private onboardingMetadata: OnboardingMetadata | null = null;
   private onboardingResponses: OnboardingStepResponse[] = [];
+  /** Runs whose `onboarding_completed` event was sent this session. */
+  private readonly completionSent = new Set<string>();
   private readonly clock: Clock;
   private readonly report: DiagnosticHandler;
 
@@ -123,17 +125,18 @@ export class RocalyticsClient {
     if (!this.rocaId) return;
     const { isTrial, value, currency, originalTransactionIdentifier, product, transaction, redemptionResult } = params;
     const productIdentifier = (product as { productIdentifier?: unknown } | undefined)?.productIdentifier;
+    const experimental: Record<string, unknown> = {};
+    if (product !== undefined) experimental.product = product;
+    if (transaction !== undefined) experimental.transaction = transaction;
+    if (redemptionResult !== undefined) experimental.redemption_result = redemptionResult;
     const properties: Record<string, unknown> = {
       is_trial: isTrial,
       original_transaction_identifier: originalTransactionIdentifier,
       product_id: params.productId ?? (typeof productIdentifier === "string" ? productIdentifier : undefined),
       price: value,
       currency_code: currency,
-      experimental: {
-        product,
-        transaction,
-        ...(redemptionResult === undefined ? {} : { redemption_result: redemptionResult }),
-      },
+      // Omitted when empty: the raw purchase objects, forwarded as given.
+      ...(Object.keys(experimental).length > 0 ? { experimental } : {}),
     };
     await this.sendTrack("purchase", properties, `${this.rocaId}-purchase-${originalTransactionIdentifier}`);
   }
@@ -190,8 +193,11 @@ export class RocalyticsClient {
   }
 
   /**
-   * Delivers one onboarding run snapshot as the pre-v1 onboarding payload.
-   * This is the send of `createRocalyticsOnboardingSink`; it never throws.
+   * Delivers one onboarding run snapshot as the pre-v1 onboarding payload,
+   * then, for an accepted completed snapshot, sends `onboarding_completed`
+   * once per run (the API also deduplicates it per device). A failed
+   * completion event makes the send transient, so a retry sends it. This is
+   * the send of `createRocalyticsOnboardingSink`; it never throws.
    */
   async sendOnboardingRun(snapshot: OnboardingRunSnapshot): Promise<SinkResult> {
     await this.ready;
@@ -201,7 +207,13 @@ export class RocalyticsClient {
     try {
       const request = buildOnboardingResponseRequest(this.context(), toOnboardingResponsePayload(snapshot));
       const response = await fetch(request.url, request.init);
-      return rocalyticsOutcome(response.status);
+      const body = response.ok ? undefined : await response.json().catch(() => undefined);
+      const result = rocalyticsOutcome(response.status, body);
+      if (result.outcome === "accepted" && snapshot.status === "completed" && !this.completionSent.has(snapshot.run_id)) {
+        await this.sendTrack("onboarding_completed", {});
+        this.completionSent.add(snapshot.run_id);
+      }
+      return result;
     } catch (error) {
       return { outcome: "transient", reason: String(error) };
     }
@@ -254,8 +266,8 @@ export class RocalyticsClient {
 
   /**
    * The corrected key's id; else the legacy key's id, copied to the corrected
-   * key; else a new id. A read that fails throws, so no id is ever minted
-   * while a key may still hold one.
+   * key; else a new id, written under both keys. A read that fails throws, so
+   * no id is ever minted while a key may still hold one.
    */
   private async readOrMintRocaId(native: RocalyticsModules): Promise<string> {
     const store = native.secureStore;
@@ -272,6 +284,14 @@ export class RocalyticsClient {
     }
     const id = native.crypto.randomUUID();
     await store.setItemAsync(ROCA_ID_KEY, id);
+    // Also under the legacy key: if a later over-the-air rollback brings back
+    // a bundle with a copied client, which reads only that key, it finds this
+    // id instead of minting a second identity for the same device.
+    try {
+      await store.setItemAsync(LEGACY_ROCA_ID_KEY, id);
+    } catch (error) {
+      this.report({ code: "identity-legacy-write-failed", message: `the roca id was not also written to ${LEGACY_ROCA_ID_KEY}: ${message(error)}` });
+    }
     return id;
   }
 
