@@ -26,6 +26,7 @@ const core = require("@rocapine/studio-sdk/core");
 check(typeof core.createDelivery === "function", "@rocapine/studio-sdk/core exports createDelivery");
 const rocalytics = require("@rocapine/studio-sdk/rocalytics");
 check(typeof rocalytics.RocalyticsClient === "function", "@rocapine/studio-sdk/rocalytics exports RocalyticsClient");
+check(typeof rocalytics.createRocalyticsOnboardingSink === "function", "@rocapine/studio-sdk/rocalytics exports createRocalyticsOnboardingSink");
 
 check(require(path.join(root, "onboarding")).onboardingRun === onboarding.onboardingRun, "onboarding/ stub folder resolves to the same module");
 check(typeof require(path.join(root, "core")).uuidv7 === "function", "core/ stub folder resolves");

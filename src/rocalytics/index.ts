@@ -13,6 +13,7 @@ export {
   RocalyticsClient,
 } from "./client";
 export type { RocalyticsClientOptions } from "./client";
+export { createRocalyticsOnboardingSink, rocalyticsOutcome, toOnboardingResponsePayload } from "./onboardingSink";
 export { loadExpoModules } from "./native";
 export type { ApplicationModule, ExpoModuleLoaders, LoadResult, RocalyticsModules } from "./native";
 export {
@@ -47,4 +48,5 @@ export type {
   TrackPurchaseParams,
 } from "./types";
 export type { Diagnostic, DiagnosticHandler } from "../core/diagnostics";
+export type { Sink, SinkResult } from "../core/sink";
 export type { Clock } from "../core/time";

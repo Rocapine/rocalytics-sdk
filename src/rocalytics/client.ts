@@ -1,6 +1,9 @@
 import { safeDiagnostics, type DiagnosticHandler } from "../core/diagnostics";
+import type { SinkResult } from "../core/sink";
 import { systemClock, type Clock } from "../core/time";
+import type { OnboardingRunSnapshot } from "../onboarding/contract";
 import { loadExpoModules, type RocalyticsModules } from "./native";
+import { rocalyticsOutcome, toOnboardingResponsePayload } from "./onboardingSink";
 import {
   buildDemandScoreRequest,
   buildIdentifyRequest,
@@ -184,6 +187,24 @@ export class RocalyticsClient {
     return (await response.json()) as DemandScoreResult;
   }
 
+  /**
+   * Delivers one onboarding run snapshot as the pre-v1 onboarding payload.
+   * This is the send of `createRocalyticsOnboardingSink`; it never throws.
+   */
+  async sendOnboardingRun(snapshot: OnboardingRunSnapshot): Promise<SinkResult> {
+    await this.ready;
+    if (!this.rocaId) return { outcome: "transient", reason: "the Rocalytics client is inert" };
+    const fetch = this.fetchFn();
+    if (!fetch) return { outcome: "transient", reason: "no fetch available" };
+    try {
+      const request = buildOnboardingResponseRequest(this.context(), toOnboardingResponsePayload(snapshot));
+      const response = await fetch(request.url, request.init);
+      return rocalyticsOutcome(response.status);
+    } catch (error) {
+      return { outcome: "transient", reason: String(error) };
+    }
+  }
+
   // --- internals --------------------------------------------------------------
 
   private async init(): Promise<void> {
@@ -295,8 +316,12 @@ export class RocalyticsClient {
     };
   }
 
+  private fetchFn(): FetchLike | undefined {
+    return this.options.fetch ?? (globalThis as { fetch?: FetchLike }).fetch;
+  }
+
   private send(request: RocalyticsRequest, endpoint: string, detail?: string) {
-    const fetch = this.options.fetch ?? (globalThis as { fetch?: FetchLike }).fetch;
+    const fetch = this.fetchFn();
     if (!fetch) return Promise.reject(new Error(`[ROCALYTICS] ${endpoint} failed: no fetch available`));
     return sendRocalyticsRequest(fetch, request, endpoint, detail);
   }
