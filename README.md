@@ -213,15 +213,15 @@ The client talks to these modules. They are optional peers, so an app that does 
 
 | Package | Range |
 |---|---|
-| `expo-application` | `>=5.8.0` |
-| `expo-crypto` | `>=12.8.0` |
-| `expo-device` | `>=5.9.0` |
-| `expo-modules-core` | `>=1.11.0` |
-| `expo-network` | `>=5.8.0` |
-| `expo-secure-store` | `>=12.8.0` |
+| `expo-application` | `*` |
+| `expo-crypto` | `*` |
+| `expo-device` | `*` |
+| `expo-modules-core` | `*` |
+| `expo-network` | `*` |
+| `expo-secure-store` | `*` |
 | `react-native` | `*` |
 
-Each floor is the oldest version with the APIs the client calls. Only the Expo SDK 54 to 57 versions of these modules have been checked against the client, by reading their source. The ranges are deliberately open, because npm checks an optional peer that the app already has: a narrow range would stop an app that only imports `/onboarding` from installing the package. That still applies below the floors. npm refuses (`ERESOLVE`) to install into an app on Expo SDK 49 or older, even for `/onboarding`-only use. `react-native` is `*`, so it never conflicts.
+Every range is `*` on purpose. npm checks an optional peer that the app already has, so any range would stop some app that only imports `/onboarding` from installing the package. Compatibility is checked at run time instead, by the presence probe described below. Only the Expo SDK 54 to 57 versions of these modules have been checked against the client, by reading their source.
 
 They are loaded when the client starts, never when the subpath is imported. The client first checks with `expo-modules-core` that each native module is in the app binary. If one is missing, for example because a JS update reached an older build, the client is **inert**: `ready` resolves, `rocaId` stays null, every method resolves without sending anything, and the cause goes to `onDiagnostic`. Nothing throws at launch.
 
@@ -292,7 +292,7 @@ A method whose request gets a non-2xx answer rejects with `[ROCALYTICS] <endpoin
 - `onboarding_metadata` carries the keys the [contract's section 9](docs/onboarding-run-contract.md#9-pre-v1-payloads-d22-d23) reads back: `onboardingId` (or `onboarding_id`, set to the onboarding key, for a run with no Studio onboarding), `audienceId`, `deployment_id`, `locale` from the run's context, and `draft: true` for a draft. It also carries `onboarding_key`, `onboarding_version`, `variant_key`, `run_id` and `seq`.
 - `sent_at` is the run's latest recorded timestamp plus `seq` milliseconds, not the device's send time. The ingest keeps one snapshot per roca id and replaces it only with a strictly later `sent_at`, so two sends in the same millisecond, or a device clock stepping back, would otherwise lose a snapshot. This value rises with every send **within a run**, and a retry resends the identical body. Across runs it does not help. If the device clock steps back between two runs, the next run's snapshots can be dropped silently: about the first span of that run equal to the step, or all of it if the run is shorter. The sink cannot tell a stored 2xx from a dropped one. Pre-v1 reporting had the same limit.
 
-**Completion.** Consumers of the pre-v1 data read completion from the `onboarding_completed` event, not from the snapshot. So once a completed snapshot is accepted, the sink also sends `track("onboarding_completed")`, once per run. Like any `track` event it is deduplicated per device. If it fails, the send counts as transient, and the tracker's retry sends it. Do not also send `onboarding_completed` yourself for a flow reported through the sink.
+**Completion.** Consumers of the pre-v1 data read completion from the `onboarding_completed` event, not from the snapshot. So once a completed snapshot is accepted, the sink also sends `track("onboarding_completed")`, once per run. Its deduplication id is run-scoped, `${rocaId}-onboarding_completed-${run_id}`. Each completed run on a device produces its own event, a replay included, and a resend of the same run's completion, even after a relaunch, is deduplicated. If it fails, the send counts as transient, and the tracker's retry sends it. Do not also send `onboarding_completed` yourself for a flow reported through the sink.
 
 **Answers.** An answer is stored under its step id and `question_key`. A consumer that reads one particular answer finds it only if the flow keeps the same step key and `questionKey` its previous reporting used. When you move a flow from `trackOnboarding` to the tracker, reuse those ids.
 

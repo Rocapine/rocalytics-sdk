@@ -47,18 +47,10 @@ describe("dependencies", () => {
     for (const name of ROCALYTICS_PEERS) expect(pkg.peerDependenciesMeta[name], name).toEqual({ optional: true });
   });
 
-  it("the peer ranges are open-ended floors at the oldest versions with the APIs the client uses, and react-native is unconstrained", () => {
-    // npm checks an optional peer the app already has, so a narrow range would
-    // stop an app that only uses /onboarding from installing the package.
-    expect(pkg.peerDependencies).toEqual({
-      "expo-application": ">=5.8.0",
-      "expo-crypto": ">=12.8.0",
-      "expo-device": ">=5.9.0",
-      "expo-modules-core": ">=1.11.0",
-      "expo-network": ">=5.8.0",
-      "expo-secure-store": ">=12.8.0",
-      "react-native": "*",
-    });
+  it("every peer range is unconstrained: the client's runtime presence probe is the compatibility guard", () => {
+    // npm checks an optional peer the app already has, so any range would
+    // stop some app that only uses /onboarding from installing the package.
+    expect(Object.values(pkg.peerDependencies)).toEqual(ROCALYTICS_PEERS.map(() => "*"));
   });
 
   it("/onboarding and /core import nothing but relative paths, and require nothing", () => {

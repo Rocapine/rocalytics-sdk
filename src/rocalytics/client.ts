@@ -195,7 +195,10 @@ export class RocalyticsClient {
   /**
    * Delivers one onboarding run snapshot as the pre-v1 onboarding payload,
    * then, for an accepted completed snapshot, sends `onboarding_completed`
-   * once per run (the API also deduplicates it per device). A failed
+   * once per run. Its deduplication id is run-scoped,
+   * `${rocaId}-onboarding_completed-${run_id}` (the API only requires the
+   * `${rocaId}-${name}` prefix), so each completed run on a device counts
+   * once, and a resend of the same run's completion is deduplicated. A failed
    * completion event makes the send transient, so a retry sends it. This is
    * the send of `createRocalyticsOnboardingSink`; it never throws.
    */
@@ -210,7 +213,7 @@ export class RocalyticsClient {
       const body = response.ok ? undefined : await response.json().catch(() => undefined);
       const result = rocalyticsOutcome(response.status, body);
       if (result.outcome === "accepted" && snapshot.status === "completed" && !this.completionSent.has(snapshot.run_id)) {
-        await this.sendTrack("onboarding_completed", {});
+        await this.sendTrack("onboarding_completed", {}, `${this.rocaId}-onboarding_completed-${snapshot.run_id}`);
         this.completionSent.add(snapshot.run_id);
       }
       return result;

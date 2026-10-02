@@ -35,6 +35,7 @@ function fakeIngest(options: { onboarding?: (call: number) => Reply; track?: (ca
   const rows = new Map<string, OnboardingResponsePayload>();
   const posted: OnboardingResponsePayload[] = [];
   const events: { name: string; deduplication_id: string; properties: unknown }[] = [];
+  const stored = new Map<string, { name: string; deduplication_id: string }>();
   const order: string[] = [];
   let onboardingCalls = 0;
   let trackCalls = 0;
@@ -52,8 +53,14 @@ function fakeIngest(options: { onboarding?: (call: number) => Reply; track?: (ca
     order.push(path);
     if (path === "/functions/v1/identify") return reply({ status: 200, json: {} });
     if (path === "/functions/v1/track") {
+      // The API only checks that the deduplication id starts with `${roca_id}-${name}`,
+      // and stores one event per deduplication id.
+      if (!String(body.deduplication_id).startsWith(`${init.headers["X-Roca-ID"]}-${body.name}`)) return reply({ status: 400, json: { error: "wrong deduplication_id" } });
       const r = options.track?.(++trackCalls) ?? { status: 204 };
-      if (r.status < 300) events.push(body);
+      if (r.status < 300) {
+        events.push(body);
+        if (!stored.has(body.deduplication_id)) stored.set(body.deduplication_id, body);
+      }
       return reply(r);
     }
     if (path === "/functions/v1/onboarding-response") {
@@ -68,7 +75,7 @@ function fakeIngest(options: { onboarding?: (call: number) => Reply; track?: (ca
     }
     return reply({ status: 404 });
   };
-  return { fetch, posted, events, order, row: () => rows.get(ROCA_ID) };
+  return { fetch, posted, events, order, row: () => rows.get(ROCA_ID), storedEvents: () => [...stored.values()] };
 }
 
 const RETURNING = () => new FakeSecureStore({ "rocalytics-roca-id": ROCA_ID, "rocadata-install-tracked": "true" });
@@ -253,14 +260,37 @@ describe("createRocalyticsOnboardingSink", () => {
 });
 
 describe("completion: the onboarding_completed event", () => {
-  it("fires once the completed snapshot is accepted, with the default deduplication id, and not for an in-progress one", async () => {
+  it("fires once the completed snapshot is accepted, with a run-scoped deduplication id, and not for an in-progress one", async () => {
     const ingest = fakeIngest();
     const sink = createRocalyticsOnboardingSink(clientFor(ingest.fetch));
     await sink.send(IN_PROGRESS);
     expect(ingest.events).toEqual([]);
     expect(await sink.send(COMPLETED)).toEqual({ outcome: "accepted" });
-    expect(ingest.events).toEqual([{ name: "onboarding_completed", deduplication_id: `${ROCA_ID}-onboarding_completed`, properties: {}, device_context: expect.any(Object) }]);
+    expect(ingest.events).toEqual([
+      { name: "onboarding_completed", deduplication_id: `${ROCA_ID}-onboarding_completed-${COMPLETED.run_id}`, properties: {}, device_context: expect.any(Object) },
+    ]);
     expect(ingest.order.slice(-2)).toEqual(["/functions/v1/onboarding-response", "/functions/v1/track"]);
+  });
+
+  it("two completed runs on one device each produce their own stored event", async () => {
+    const ingest = fakeIngest();
+    const sink = createRocalyticsOnboardingSink(clientFor(ingest.fetch));
+    const second: OnboardingRunSnapshot = { ...COMPLETED, run_id: "0190a8c5-0000-7000-8000-000000000002", started_at: "2026-01-11T08:00:00.000Z" };
+    await sink.send(COMPLETED);
+    await sink.send(second);
+    expect(ingest.storedEvents().map((e) => e.deduplication_id)).toEqual([
+      `${ROCA_ID}-onboarding_completed-${COMPLETED.run_id}`,
+      `${ROCA_ID}-onboarding_completed-${second.run_id}`,
+    ]);
+  });
+
+  it("a retry of one run's completion after a relaunch is deduplicated by the ingest", async () => {
+    const ingest = fakeIngest();
+    await createRocalyticsOnboardingSink(clientFor(ingest.fetch)).send(COMPLETED);
+    // A new session: the in-memory "already sent" set is empty, so the event goes out again.
+    await createRocalyticsOnboardingSink(clientFor(ingest.fetch)).send(COMPLETED);
+    expect(ingest.events).toHaveLength(2);
+    expect(ingest.storedEvents()).toHaveLength(1);
   });
 
   it("does not fire twice when the completed snapshot is sent again", async () => {
