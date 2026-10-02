@@ -1,7 +1,7 @@
 {
   "name": "@rocapine/studio-sdk",
   "version": "0.1.0",
-  "description": "Headless client SDK for Onboarding Studio: a typed onboarding run tracker for any onboarding, including hand-coded ones",
+  "description": "Headless client SDK for Onboarding Studio: a typed onboarding run tracker for any onboarding, including hand-coded ones, and the Rocalytics client",
   "keywords": [
     "onboarding",
     "analytics",

@@ -8,6 +8,25 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- `@rocapine/studio-sdk/rocalytics`: the Rocalytics client, `RocalyticsClient`, replacing the `rocalytics.client.ts` file apps copied.
+  - Its requests equal the reference client's. A test replays scenarios captured from the reference and compares every URL, header and body.
+  - API: `ready`, `rocaId`, `track`, `trackEvent`, `trackPurchase`, `identify`, `trackOnboarding`, `trackCustomEvent` (with `dedupSuffix`) and `getDemandScore`.
+  - Also exported: `getEventId`, and the request builders `buildTrackRequest`, `buildIdentifyRequest`, `buildOnboardingResponseRequest` and `buildDemandScoreRequest`.
+  - The roca id is stored under `rocalytics-roca-id`. A device that has only the misspelled `rocalitics-roca-id` keeps its id, which is copied to the new key. The old key is not deleted. A failed read never mints a new id.
+  - `install` fires once per device. Both `rocadata-install-tracked` and `rocadata-install-tracked-4` count as already sent.
+  - The Expo modules load lazily, after a presence check through `expo-modules-core`. When one is missing from the binary, the client is inert and reports why through `onDiagnostic`. It does not throw.
+  - Nothing is logged to the console, purchase properties included.
+- `createRocalyticsOnboardingSink(client)`: delivers the onboarding run tracker's snapshots to Rocalytics.
+  - Each snapshot is mapped onto the pre-v1 onboarding payload (`toOnboardingResponsePayload`), the only shape the ingest reads.
+  - The sink reads the HTTP status (`rocalyticsOutcome`): 2xx is accepted, 400 and 405 are rejected, everything else is transient.
+- Superwall event tracking is not ported: there is no `trackSuperwallEvent`, and nothing calls `/superwall-events`.
+
+### Changed
+
+- The package declares optional peer dependencies: `expo-application`, `expo-crypto`, `expo-device`, `expo-modules-core`, `expo-network`, `expo-secure-store` and `react-native`, with ranges covering Expo SDK 54 to 57. Only `/rocalytics` loads them. `/onboarding` and `/core` still depend on nothing, and `npm run check:exports` verifies that over their built require graph.
+
 ## [0.1.0] - unreleased
 
 First release.
