@@ -20,14 +20,14 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
   - No request, response or purchase property is logged. Start-up problems go to `onDiagnostic`, which defaults to `console.warn`.
 - `createRocalyticsOnboardingSink(client)`: delivers the onboarding run tracker's snapshots to Rocalytics.
   - Each snapshot is mapped onto the pre-v1 onboarding payload (`toOnboardingResponsePayload`), the only shape the ingest reads, with the `onboarding_metadata` keys the contract's section 9 reads.
-  - Its `sent_at` is the run's latest recorded timestamp plus `seq` milliseconds. That strictly increases across a run's sends, so an ingest that keeps only a strictly later snapshot never drops one, whatever the device clock does, and a retry resends the identical body.
+  - Its `sent_at` is the run's latest recorded timestamp plus `seq` milliseconds. Within one run that strictly increases across sends, whatever the device clock does, so an ingest that keeps only a strictly later snapshot never drops one of the run's snapshots. A retry resends the identical body. Across runs this does not hold. The ingest keeps one row per roca id, so after the device clock steps back between two runs, a later run's snapshots can be dropped silently, as they could before: about the first span of that run equal to the step, or all of it if the run is shorter. The sink cannot tell a stored 2xx from a dropped one.
   - Once a completed snapshot is accepted, the sink sends `onboarding_completed` once per run.
   - `rocalyticsOutcome`: a 2xx is accepted. Only a body saying `{"outcome": "rejected"}` is permanent. Any other answer is transient.
 - Superwall event tracking is not ported: there is no `trackSuperwallEvent`, and nothing calls `/superwall-events`.
 
 ### Changed
 
-- The package declares optional peer dependencies: `expo-application`, `expo-crypto`, `expo-device`, `expo-modules-core`, `expo-network`, `expo-secure-store` and `react-native`. The ranges are open-ended floors at the oldest versions with the APIs the client uses, and `react-native` is `*`, so an app that already has an older version installs the package without a peer conflict. Only `/rocalytics` loads them. `/onboarding` and `/core` still depend on nothing, and `npm run check:exports` verifies that over their built require graph.
+- The package declares optional peer dependencies: `expo-application`, `expo-crypto`, `expo-device`, `expo-modules-core`, `expo-network`, `expo-secure-store` and `react-native`. The ranges are open-ended floors at the oldest versions with the APIs the client uses. `react-native` is `*`, so no `react-native` version causes a peer conflict. The Expo floors still do: npm refuses (`ERESOLVE`) to install the package into an app whose Expo modules are older than the floors (Expo SDK 49 or older), even if it imports only `/onboarding`. Only `/rocalytics` loads them. `/onboarding` and `/core` still depend on nothing, and `npm run check:exports` verifies that over their built require graph.
 
 ## [0.1.0] - unreleased
 

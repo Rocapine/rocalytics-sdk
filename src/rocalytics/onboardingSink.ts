@@ -26,6 +26,9 @@ import type { OnboardingMetadata, OnboardingResponsePayload, OnboardingStepAnswe
  *   recorded timestamp plus `seq` milliseconds. A snapshot only ever adds
  *   timestamps to the one before it and `seq` rises with every send, so this
  *   strictly increases across a run's sends whatever the device clock does.
+ *   Only within a run: the ingest keeps one row per sender, so after the
+ *   clock steps back between runs, a later run's snapshots can still be
+ *   dropped while answered 2xx, as pre-v1 reporting already could.
  *   It depends on the snapshot alone, so a retry, even after a relaunch,
  *   resends the identical body.
  */

@@ -221,7 +221,7 @@ The client talks to these modules. They are optional peers, so an app that does 
 | `expo-secure-store` | `>=12.8.0` |
 | `react-native` | `*` |
 
-Each floor is the oldest version with the APIs the client calls. Only the Expo SDK 54 to 57 versions of these modules have been checked against the client, by reading their source. The ranges are deliberately open: npm checks an optional peer that the app already has, so a narrow range would stop an app that only imports `/onboarding` from installing the package.
+Each floor is the oldest version with the APIs the client calls. Only the Expo SDK 54 to 57 versions of these modules have been checked against the client, by reading their source. The ranges are deliberately open, because npm checks an optional peer that the app already has: a narrow range would stop an app that only imports `/onboarding` from installing the package. That still applies below the floors. npm refuses (`ERESOLVE`) to install into an app on Expo SDK 49 or older, even for `/onboarding`-only use. `react-native` is `*`, so it never conflicts.
 
 They are loaded when the client starts, never when the subpath is imported. The client first checks with `expo-modules-core` that each native module is in the app binary. If one is missing, for example because a JS update reached an older build, the client is **inert**: `ready` resolves, `rocaId` stays null, every method resolves without sending anything, and the cause goes to `onDiagnostic`. Nothing throws at launch.
 
@@ -290,7 +290,7 @@ A method whose request gets a non-2xx answer rejects with `[ROCALYTICS] <endpoin
 - Entries become `responses`, with `step_key` as `step_id`.
 - Answers become `{ [questionKey]: value }`. A numeric answer's unit is dropped, because that shape has no place for it.
 - `onboarding_metadata` carries the keys the [contract's section 9](docs/onboarding-run-contract.md#9-pre-v1-payloads-d22-d23) reads back: `onboardingId` (or `onboarding_id`, set to the onboarding key, for a run with no Studio onboarding), `audienceId`, `deployment_id`, `locale` from the run's context, and `draft: true` for a draft. It also carries `onboarding_key`, `onboarding_version`, `variant_key`, `run_id` and `seq`.
-- `sent_at` is the run's latest recorded timestamp plus `seq` milliseconds, not the device's send time. The ingest keeps one snapshot per roca id and replaces it only with a strictly later `sent_at`, so two sends in the same millisecond, or a device clock stepping back, would otherwise lose a snapshot. This value rises with every send of a run, and a retry resends the identical body.
+- `sent_at` is the run's latest recorded timestamp plus `seq` milliseconds, not the device's send time. The ingest keeps one snapshot per roca id and replaces it only with a strictly later `sent_at`, so two sends in the same millisecond, or a device clock stepping back, would otherwise lose a snapshot. This value rises with every send **within a run**, and a retry resends the identical body. Across runs it does not help. If the device clock steps back between two runs, the next run's snapshots can be dropped silently: about the first span of that run equal to the step, or all of it if the run is shorter. The sink cannot tell a stored 2xx from a dropped one. Pre-v1 reporting had the same limit.
 
 **Completion.** Consumers of the pre-v1 data read completion from the `onboarding_completed` event, not from the snapshot. So once a completed snapshot is accepted, the sink also sends `track("onboarding_completed")`, once per run. Like any `track` event it is deduplicated per device. If it fails, the send counts as transient, and the tracker's retry sends it. Do not also send `onboarding_completed` yourself for a flow reported through the sink.
 
@@ -298,7 +298,12 @@ A method whose request gets a non-2xx answer rejects with `[ROCALYTICS] <endpoin
 
 The ingest keeps one onboarding per roca id, so report a flow through the sink or through `trackOnboarding`, not both.
 
-That endpoint answers success with a 2xx and no body, so a 2xx is accepted. Otherwise the contract's rule applies: only a body saying `{"outcome": "rejected"}` is permanent, and every other answer is transient and retried. That includes a 400 without such a body, and a 404, which means `/identify` has not landed yet.
+That endpoint answers success with a 2xx and no body, so a 2xx is accepted. Otherwise the contract's rule applies: only a body saying `{"outcome": "rejected"}` is permanent, and every other answer is transient and retried. That includes a 400 without such a body, and a 404. Every send waits for `ready`, so a 404 (no identity for this roca id) means the start-up identify failed in this session. The retries stop failing once an identify succeeds, at the next launch or through the app's own `identify()` call.
+
+**Known limits.**
+
+- **A late completion can be credited to the next run.** The app may be killed before the completed snapshot is sent, then start a new run on relaunch. When the stored snapshot is finally delivered, its `onboarding_completed` event arrives during the new run, so a consumer that matches the event to the row by time can credit the completion to the new run.
+- **A permanently failing completion event is retried forever.** If `/track` permanently refuses `onboarding_completed`, the completed snapshot's send stays transient and is retried at the tracker's maximum backoff, about once a minute, for as long as the app runs.
 
 ### Migrating from a copied `rocalytics.client.ts`
 
