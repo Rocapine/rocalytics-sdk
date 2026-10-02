@@ -14,18 +14,20 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
   - Its requests equal the reference client's. A test replays scenarios captured from the reference and compares every URL, header and body.
   - API: `ready`, `rocaId`, `track`, `trackEvent`, `trackPurchase`, `identify`, `trackOnboarding`, `trackCustomEvent` (with `dedupSuffix`) and `getDemandScore`.
   - Also exported: `getEventId`, and the request builders `buildTrackRequest`, `buildIdentifyRequest`, `buildOnboardingResponseRequest` and `buildDemandScoreRequest`.
-  - The roca id is stored under `rocalytics-roca-id`. A device that has only the misspelled `rocalitics-roca-id` keeps its id, which is copied to the new key. The old key is not deleted. A failed read never mints a new id.
+  - The roca id is stored under `rocalytics-roca-id`. A device that has only the misspelled `rocalitics-roca-id` keeps its id, which is copied to the new key. The old key is not deleted, and a newly minted id is written under both keys, so a bundle rolled back to a copied client reads the same id. A failed read never mints a new id.
   - `install` fires once per device. Both `rocadata-install-tracked` and `rocadata-install-tracked-4` count as already sent.
   - The Expo modules load lazily, after a presence check through `expo-modules-core`. When one is missing from the binary, the client is inert and reports why through `onDiagnostic`. It does not throw.
   - No request, response or purchase property is logged. Start-up problems go to `onDiagnostic`, which defaults to `console.warn`.
 - `createRocalyticsOnboardingSink(client)`: delivers the onboarding run tracker's snapshots to Rocalytics.
-  - Each snapshot is mapped onto the pre-v1 onboarding payload (`toOnboardingResponsePayload`), the only shape the ingest reads.
-  - The sink reads the HTTP status (`rocalyticsOutcome`): 2xx is accepted, 400 and 405 are rejected, everything else is transient.
+  - Each snapshot is mapped onto the pre-v1 onboarding payload (`toOnboardingResponsePayload`), the only shape the ingest reads, with the `onboarding_metadata` keys the contract's section 9 reads.
+  - Its `sent_at` is the run's latest recorded timestamp plus `seq` milliseconds. That strictly increases across a run's sends, so an ingest that keeps only a strictly later snapshot never drops one, whatever the device clock does, and a retry resends the identical body.
+  - Once a completed snapshot is accepted, the sink sends `onboarding_completed` once per run.
+  - `rocalyticsOutcome`: a 2xx is accepted. Only a body saying `{"outcome": "rejected"}` is permanent. Any other answer is transient.
 - Superwall event tracking is not ported: there is no `trackSuperwallEvent`, and nothing calls `/superwall-events`.
 
 ### Changed
 
-- The package declares optional peer dependencies: `expo-application`, `expo-crypto`, `expo-device`, `expo-modules-core`, `expo-network`, `expo-secure-store` and `react-native`, with ranges covering Expo SDK 54 to 57. Only `/rocalytics` loads them. `/onboarding` and `/core` still depend on nothing, and `npm run check:exports` verifies that over their built require graph.
+- The package declares optional peer dependencies: `expo-application`, `expo-crypto`, `expo-device`, `expo-modules-core`, `expo-network`, `expo-secure-store` and `react-native`. The ranges are open-ended floors at the oldest versions with the APIs the client uses, and `react-native` is `*`, so an app that already has an older version installs the package without a peer conflict. Only `/rocalytics` loads them. `/onboarding` and `/core` still depend on nothing, and `npm run check:exports` verifies that over their built require graph.
 
 ## [0.1.0] - unreleased
 
@@ -48,5 +50,5 @@ First release.
   - Malformed stored state is discarded. Storage that cannot be read, or holds an unknown format, is left untouched.
 - `@rocapine/studio-sdk/core` (internal, no stability promise): the sink interface, latest-snapshot delivery with backoff, UUIDv7 run ids, run context capture, and a serial JSON store.
 - The contract v1 document, JSON Schema, TypeScript types and example payloads in `docs/`. The public payload types are the contract's types, and a test fails if they drift from the schema.
-- No runtime or peer dependencies.
+- No runtime dependencies. `/onboarding` and `/core` have no peer dependencies either.
 - MIT license.

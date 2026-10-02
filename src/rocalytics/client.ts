@@ -108,7 +108,7 @@ export class RocalyticsClient {
 
   /**
    * Sends a custom event with any name. It is not stored as an analytics
-   * event: the API forwards it to the CRM to drive automations, with
+   * event: the API passes it on to drive automations, with
    * `properties` as template variables. Deduplicated on `${rocaId}-${name}`,
    * so a once-ever event can be re-fired safely; pass `dedupSuffix` (a date,
    * say) to keep each occurrence of a recurring event distinct.

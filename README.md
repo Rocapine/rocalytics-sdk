@@ -209,19 +209,19 @@ When recording one more entry, answer or property change would cross a limit, th
 
 ### Peer dependencies
 
-The client talks to these modules. They are optional peers, so an app that does not import `/rocalytics` needs none of them. An app that does must install all of them, which an Expo app on SDK 54 to 57 already has, or gets with `npx expo install expo-application expo-crypto expo-device expo-network expo-secure-store`:
+The client talks to these modules. They are optional peers, so an app that does not import `/rocalytics` needs none of them. An app that does must install all of them, which an Expo app usually already has, or gets with `npx expo install expo-application expo-crypto expo-device expo-network expo-secure-store`:
 
 | Package | Range |
 |---|---|
-| `expo-application` | `^7.0.0 \|\| >=55.0.0` |
-| `expo-crypto` | `^15.0.0 \|\| >=55.0.0` |
-| `expo-device` | `^8.0.0 \|\| >=55.0.0` |
-| `expo-modules-core` | `^3.0.0 \|\| >=55.0.0` |
-| `expo-network` | `^8.0.0 \|\| >=55.0.0` |
-| `expo-secure-store` | `^15.0.0 \|\| >=55.0.0` |
-| `react-native` | `>=0.81.0` |
+| `expo-application` | `>=5.8.0` |
+| `expo-crypto` | `>=12.8.0` |
+| `expo-device` | `>=5.9.0` |
+| `expo-modules-core` | `>=1.11.0` |
+| `expo-network` | `>=5.8.0` |
+| `expo-secure-store` | `>=12.8.0` |
+| `react-native` | `*` |
 
-npm still checks an optional peer that the app already has. An app with `react-native` below 0.81, or an Expo module older than SDK 54, gets an `ERESOLVE` error when it installs this package, even if it imports only `/onboarding`. An app with none of these packages installs it without complaint.
+Each floor is the oldest version with the APIs the client calls. Only the Expo SDK 54 to 57 versions of these modules have been checked against the client, by reading their source. The ranges are deliberately open: npm checks an optional peer that the app already has, so a narrow range would stop an app that only imports `/onboarding` from installing the package.
 
 They are loaded when the client starts, never when the subpath is imported. The client first checks with `expo-modules-core` that each native module is in the app binary. If one is missing, for example because a JS update reached an older build, the client is **inert**: `ready` resolves, `rocaId` stays null, every method resolves without sending anything, and the cause goes to `onDiagnostic`. Nothing throws at launch.
 
@@ -279,15 +279,26 @@ export function setUpOnboardingTracking(storage: KeyValueStorage, context: () =>
 | `track(name, properties?)`, `trackEvent(...)` | An analytics event: `install`, `onboarding_completed`, `purchase`, `subscription_started` or `trial_started`. |
 | `trackPurchase(params)` | `purchase`, deduplicated per original transaction. `{ isTrial, value, currency, originalTransactionIdentifier, productId?, product?, transaction?, redemptionResult? }`. |
 | `identify(identifiers)` | Attaches identifiers (`user_id`, `revenue_cat_id`, `adjust_attribution`, ...) to the identity. |
-| `trackCustomEvent(name, properties?, dedupSuffix?)` | An event with any name, forwarded to the CRM rather than stored. Deduplicated on `${rocaId}-${name}`, plus `-${dedupSuffix}` when given. |
+| `trackCustomEvent(name, properties?, dedupSuffix?)` | An event with any name, passed on by the API to drive automations rather than stored as an analytics event. Deduplicated on `${rocaId}-${name}`, plus `-${dedupSuffix}` when given. |
 | `trackOnboarding(stepId, answers?, metadata?)` | The pre-v1 onboarding calls, unchanged. Resends every step seen so far. |
 | `getDemandScore(signals?)` | The server's 1 to 100 demand score for this install. Rejects when the client is inert. |
 
 A method whose request gets a non-2xx answer rejects with `[ROCALYTICS] <endpoint> failed: <status>`, as the copied client did. The client never logs a request, its response or purchase properties. The only thing it reports is why it went inert or why start-up failed, through `onDiagnostic`, which defaults to `console.warn`. The request builders (`buildTrackRequest`, `buildIdentifyRequest`, `buildOnboardingResponseRequest`, `buildDemandScoreRequest`) and `getEventId` are exported as pure functions.
 
-**Onboarding runs.** `createRocalyticsOnboardingSink(client)` is a sink for the tracker. The Rocalytics ingest reads only the pre-v1 onboarding payload, so each snapshot is mapped onto it (`toOnboardingResponsePayload`): entries become `responses`, answers become `{ [questionKey]: value }`, and the run's identity and Studio links go in `onboarding_metadata`. A numeric answer's unit is dropped, because that shape has no place for it. The ingest keeps one onboarding per roca id, so report a flow through the sink or through `trackOnboarding`, not both.
+**Onboarding runs.** `createRocalyticsOnboardingSink(client)` is a sink for the tracker. The Rocalytics ingest reads only the pre-v1 onboarding payload, so each snapshot is mapped onto it (`toOnboardingResponsePayload`):
 
-That endpoint answers with a status code and no outcome body, so this sink reads the status, unlike `createHttpSink`: 2xx is accepted, 400 and 405 are rejected, and everything else is transient and retried, a 404 included, since it means `/identify` has not landed yet.
+- Entries become `responses`, with `step_key` as `step_id`.
+- Answers become `{ [questionKey]: value }`. A numeric answer's unit is dropped, because that shape has no place for it.
+- `onboarding_metadata` carries the keys the [contract's section 9](docs/onboarding-run-contract.md#9-pre-v1-payloads-d22-d23) reads back: `onboardingId` (or `onboarding_id`, set to the onboarding key, for a run with no Studio onboarding), `audienceId`, `deployment_id`, `locale` from the run's context, and `draft: true` for a draft. It also carries `onboarding_key`, `onboarding_version`, `variant_key`, `run_id` and `seq`.
+- `sent_at` is the run's latest recorded timestamp plus `seq` milliseconds, not the device's send time. The ingest keeps one snapshot per roca id and replaces it only with a strictly later `sent_at`, so two sends in the same millisecond, or a device clock stepping back, would otherwise lose a snapshot. This value rises with every send of a run, and a retry resends the identical body.
+
+**Completion.** Consumers of the pre-v1 data read completion from the `onboarding_completed` event, not from the snapshot. So once a completed snapshot is accepted, the sink also sends `track("onboarding_completed")`, once per run. Like any `track` event it is deduplicated per device. If it fails, the send counts as transient, and the tracker's retry sends it. Do not also send `onboarding_completed` yourself for a flow reported through the sink.
+
+**Answers.** An answer is stored under its step id and `question_key`. A consumer that reads one particular answer finds it only if the flow keeps the same step key and `questionKey` its previous reporting used. When you move a flow from `trackOnboarding` to the tracker, reuse those ids.
+
+The ingest keeps one onboarding per roca id, so report a flow through the sink or through `trackOnboarding`, not both.
+
+That endpoint answers success with a 2xx and no body, so a 2xx is accepted. Otherwise the contract's rule applies: only a body saying `{"outcome": "rejected"}` is permanent, and every other answer is transient and retried. That includes a 400 without such a body, and a 404, which means `/identify` has not landed yet.
 
 ### Migrating from a copied `rocalytics.client.ts`
 
@@ -298,7 +309,7 @@ That endpoint answers with a status code and no outcome body, so this sink reads
 
 | If your copy | Then |
 |---|---|
-| stored the id under `rocalitics-roca-id` | Nothing to do. The id is now read from `rocalytics-roca-id`. On the first launch, a device with only the old key keeps its id, which is copied to the new key. The old key is left in place. A device never gets a new id while either key holds one. |
+| stored the id under `rocalitics-roca-id` | Nothing to do. The id is now read from `rocalytics-roca-id`. On the first launch, a device with only the old key keeps its id, which is copied to the new key. The old key is left in place, and a newly minted id is written under both keys, so a bundle rolled back to the copied client reads the same id. A device never gets a new id while either key holds one. |
 | recorded the install under `rocadata-install-tracked-4` | Nothing to do. Either install key counts as "install sent", so no device sends `install` twice. |
 | imported the Expo modules at the top of the file | Nothing to do. The modules now load lazily, and a missing native module makes the client inert instead of crashing the launch. |
 | took `{ product, transaction }`, or `{ productId, redemptionResult }`, in `trackPurchase` | Both still work. `productId` defaults to `product.productIdentifier`. Product and transaction are typed as any object, so pass the purchase SDK's own types. |

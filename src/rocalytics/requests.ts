@@ -57,7 +57,7 @@ export interface TrackRequestInput {
   deviceContext: Record<string, unknown> | null;
   /** Defaults to `${rocaId}-${name}`. */
   deduplicationId?: string;
-  /** A custom event is not stored as an analytics event: the API forwards it to the CRM. */
+  /** A custom event is not stored as an analytics event: the API passes it on to drive automations. */
   customEvent?: boolean;
 }
 
