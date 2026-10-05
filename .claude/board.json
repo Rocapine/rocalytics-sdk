@@ -1,0 +1,159 @@
+{
+  "$comment": [
+    "Chart for Rocapine/studio-sdk on project #5 (Onboarding Studio v2 — Analytics, Users & Control).",
+    "Project #5 spans several repos; onboarding-studio/.claude/board.json is the master chart for it.",
+    "This chart scopes the board to THIS repo only: select/route read issues from Rocapine/studio-sdk.",
+    "Board IDs below are copied from the master chart and verified against `gh project field-list 5` on 2026-10-05."
+  ],
+  "name": "studio-sdk",
+  "board": {
+    "org": "Rocapine",
+    "projectNumber": 5,
+    "projectTitle": "Onboarding Studio v2 — Analytics, Users & Control",
+    "projectId": "PVT_kwDOCkEdDc4Bk7bp",
+    "url": "https://github.com/orgs/Rocapine/projects/5",
+    "statusFieldId": "PVTSSF_lADOCkEdDc4Bk7bpzhjqKtY",
+    "statusOptions": {
+      "Idea": "b9735b7e",
+      "Refining": "621e4404",
+      "Specced": "ccb575ab",
+      "Prioritized": "25f9746e",
+      "In progress": "0cc2de38",
+      "Shipped": "45f7c2af",
+      "Dropped": "3406ca50"
+    },
+    "statusNote": "Not the old Backlog/Ready/In progress/In review/Done. Rough mapping for agents that still say the old words: Ready = Prioritized (actionable now), Backlog = Idea or Refining (needs a decision first), Done = Shipped (after a merge). There is NO 'In review' status: a builder moves a card to `In progress` on pickup and leaves it there while the PR is open. The README rule is that an item is refined (Refining), given acceptance criteria (Specced), then ranked (Prioritized) before it is built.",
+    "machineOwned": [
+      "the `Priority` field"
+    ],
+    "machineOwnedNote": "`Priority` (and `Effort`) on this project is a projection of an org-level ISSUE field and has no options of its own — it cannot be written here at all. Leave it alone; write it with setIssueFieldValue (see `file.priority`). Sub-issue linking auto-adds the child to the project, so a following addProjectV2ItemById fails with \"Content already exists in this project\": treat that as success and look the item up via node(id:).projectItems."
+  },
+  "repos": [
+    "Rocapine/studio-sdk"
+  ],
+  "select": {
+    "mode": "agent",
+    "rules": "1. Open issues in Rocapine/studio-sdk only. 2. Status is `Prioritized` (the ready status); skip Idea/Refining/Specced (need a decision first), In progress, Shipped, Dropped. 3. Not blocked by another open issue. 4. Not a Feature with open sub-issues — pick a sub-issue. 5. Read Layer from the project (it is a field, not a label); a ticket with no Layer is skipped and reported as `no Layer set`."
+  },
+  "route": {
+    "by": "layer",
+    "map": {
+      "SDK": "worktree-feature-dev",
+      "Infra/CI": "worktree-feature-dev",
+      "Docs": "worktree-feature-dev"
+    },
+    "default": "worktree-feature-dev",
+    "note": "Only SDK, Infra/CI and Docs belong in this repo. Studio Frontend / Edge Functions / Database / MCP on a studio-sdk issue is mislabelled: skip and report."
+  },
+  "build": {
+    "baseBranch": "main",
+    "packageManager": "npm",
+    "checks": [
+      "npm run lint",
+      "npm test",
+      "npm run build"
+    ]
+  },
+  "review": {
+    "agentType": "pr-review-scorer",
+    "lenses": [
+      {
+        "key": "correctness",
+        "instruction": "Find real defects that break behavior: incorrect logic, unhandled edge cases, missing error handling, security issues. Do not flag style preferences."
+      },
+      {
+        "key": "public-api",
+        "instruction": "This is a published package (@rocapine/studio-sdk with subpath exports). Flag breaking changes to exported types/functions or package.json exports without a CHANGELOG entry and version bump."
+      },
+      {
+        "key": "repo-rules",
+        "instruction": "Check against this repo's written rules (CLAUDE.md, README, docs/). Flag only concrete violations of rules actually written down."
+      }
+    ]
+  },
+  "ship": {
+    "mode": "brief"
+  },
+  "file": {
+    "issueTypes": {
+      "feature": "Feature",
+      "task": "Task",
+      "bug": "Bug"
+    },
+    "issueTypesNote": "Set on the issue via GraphQL `updateIssueIssueType` (or `gh issue edit --type <T>` where the CLI version supports it), not a label. A Feature carries no Layer; its Task sub-issues do (see `onePerTask`).",
+    "layerField": "Layer",
+    "layerFieldId": "PVTSSF_lADOCkEdDc4Bk7bpzhjqK5s",
+    "layers": [
+      "SDK",
+      "Infra/CI",
+      "Docs"
+    ],
+    "layerOptionIds": {
+      "SDK": "295ab666",
+      "Infra/CI": "2304f233",
+      "Docs": "3ff761d9"
+    },
+    "fields": {
+      "$comment": "Project #5's single-select fields besides Status and Layer. Written with updateProjectV2ItemFieldValue on the PROJECT ITEM. Pillar, Verdict and Persona are set on a Feature; its Task sub-issues carry Layer.",
+      "pillar": {
+        "fieldId": "PVTSSF_lADOCkEdDc4Bk7bpzhjqK3I",
+        "options": {
+          "Analytics": "1946c288",
+          "User data": "51644d5a",
+          "Remote control": "d4e15b00",
+          "Payments": "b0349f85",
+          "Sunset": "a1e7435b",
+          "Foundation": "5ea6f254"
+        }
+      },
+      "verdict": {
+        "fieldId": "PVTSSF_lADOCkEdDc4Bk7bpzhjqK5k",
+        "options": {
+          "Mandatory": "2a623e33",
+          "Useful": "4d6eb6f4",
+          "In app": "b4ac7f62",
+          "Drop": "c3df2ff5",
+          "Undecided": "4df71747"
+        }
+      },
+      "persona": {
+        "fieldId": "PVTSSF_lADOCkEdDc4Bk7bpzhjqK5o",
+        "options": {
+          "Product manager": "46e0d332",
+          "Developer": "172e2a35",
+          "Growth": "5ade9669"
+        }
+      },
+      "text": {
+        "metric": "PVTF_lADOCkEdDc4Bk7bpzhjqK6o",
+        "target": "PVTF_lADOCkEdDc4Bk7bpzhjqK6s"
+      }
+    },
+    "onePerTask": true,
+    "priority": {
+      "kind": "org-issue-field",
+      "field": "Priority",
+      "graphqlFieldId": "IFSS_kgDOAb2oDg",
+      "restFieldId": 29206542,
+      "options": {
+        "Urgent": "IFSSO_kgDOAwvOpA",
+        "High": "IFSSO_kgDOAwvOpQ",
+        "Medium": "IFSSO_kgDOAwvOpg",
+        "Low": "IFSSO_kgDOAwvOpw"
+      },
+      "restOptionIds": {
+        "Urgent": 51105444,
+        "High": 51105445,
+        "Medium": 51105446,
+        "Low": 51105447
+      },
+      "mutation": "setIssueFieldValue",
+      "note": "Priority is an ORG-LEVEL issue field (GET /orgs/rocapine/issue-fields), not a project field. The project only projects it and has no options of its own, so `updateProjectV2Field` refuses with \"Only custom fields can be updated\" — that error means WRONG API, not a missing scope. Write it on the ISSUE: setIssueFieldValue(issueId, issueFields:[{fieldId, singleSelectOptionId, rationale, confidence}]). It is agent-aware: `rationale` (280 chars), a `confidence` enum, and `suggest: true` to store a pending suggestion for human review instead of writing. There is also an Effort field (node IFSS_kgDOAb2oDA, REST 29206545).",
+      "optionsNote": "`singleSelectOptionId` takes the option's GraphQL NODE id (the values in `options`), NOT the numeric id the REST /orgs/rocapine/issue-fields endpoint returns (kept in `restOptionIds` for cross-reference only). Passing the numeric one fails with \"Could not resolve to a node with the global id\" (also NOT_FOUND on a raw numeric like 51105447), which reads like a bad FIELD id and is not. Re-resolve with node(id:\"IFSS_kgDOAb2oDg\"){... on IssueFieldSingleSelect{options{id name}}} if an option is ever added or renamed. Verified by successful writes on RNO#279 (2026-09-15) and independently re-confirmed broken-then-fixed during the 2026-09-25 board widening."
+    },
+    "requiredSections": [
+      "Definition of done"
+    ],
+    "decomposition": "Native GitHub sub-issues + Blocked-by edges. Features live in Rocapine/onboarding-studio; studio-sdk issues are technical Task sub-issues of them."
+  }
+}
