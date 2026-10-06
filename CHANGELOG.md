@@ -25,6 +25,10 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
   - `rocalyticsOutcome`: a 2xx is accepted. Only a body saying `{"outcome": "rejected"}` is permanent. Any other answer is transient.
 - Superwall event tracking is not ported: there is no `trackSuperwallEvent`, and nothing calls `/superwall-events`.
 
+### Fixed
+
+- `@rocapine/studio-sdk/onboarding`: a numeric `studio.onboardingId`, `deploymentId` or `audienceId` passed at run time is sent as its decimal string, as the contract says, when it is a safe non-negative integer. It used to make the start invalid. A fraction, a negative number, `NaN`, `Infinity` or an integer above `Number.MAX_SAFE_INTEGER` is still `invalid-start`, and so is `studio: null`. The TypeScript type stays `string`.
+
 ### Changed
 
 - The package declares optional peer dependencies: `expo-application`, `expo-crypto`, `expo-device`, `expo-modules-core`, `expo-network`, `expo-secure-store` and `react-native`. Every range is `*`, so an app that already has any version of them installs the package without a peer conflict, and the client's run-time presence probe is the compatibility check. Only `/rocalytics` loads them. `/onboarding` and `/core` still depend on nothing, and `npm run check:exports` verifies that over their built require graph.

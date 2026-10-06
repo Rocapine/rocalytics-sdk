@@ -18,6 +18,11 @@ export interface ManifestInput {
   steps: { stepKey: string; slot?: string }[];
 }
 
+/**
+ * Studio ids are strings. A number passed at run time (from untyped JSON, for
+ * example) is sent in decimal when it is a safe non-negative integer; any
+ * other number makes the start invalid.
+ */
 export interface StudioInput {
   /** Null and undefined both mean absent. */
   onboardingId?: string | null;
@@ -69,13 +74,24 @@ export interface ValidStart {
   warnings: [string, string][];
 }
 
+/** A Studio id that is a safe non-negative integer, in decimal (contract 3.1); anything else as it is. */
+const decimalId = (v: unknown): unknown => (typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? String(v) : v);
+
 export function validateStart(options: StartOptions): { ok: true; value: ValidStart } | { ok: false; errors: string[] } {
   const errors: string[] = [];
   const warnings: [string, string][] = [];
   if (!options || typeof options !== "object") return { ok: false, errors: ["start options are not an object"] };
 
-  // Studio links.
-  const studioIn = options.studio;
+  // Studio links. Read once, with numeric ids converted, by both the links and the identity below.
+  const studioIn: StudioInput | undefined =
+    options.studio && typeof options.studio === "object"
+      ? {
+          ...options.studio,
+          onboardingId: decimalId(options.studio.onboardingId) as string | null | undefined,
+          deploymentId: decimalId(options.studio.deploymentId) as string | null | undefined,
+          audienceId: decimalId(options.studio.audienceId) as string | null | undefined,
+        }
+      : options.studio;
   let studio: StudioLinks | undefined;
   if (studioIn !== undefined) {
     if (!studioIn || typeof studioIn !== "object") errors.push("studio is not an object");

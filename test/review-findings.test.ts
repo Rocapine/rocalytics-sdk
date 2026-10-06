@@ -20,9 +20,10 @@ describe("F1: a null Studio deployment id", () => {
     expect(h.sink.last!.studio).toEqual({ onboarding_id: "abc" });
   });
 
+  // Only a Studio id that is a safe non-negative integer is converted (known-limits.test.ts, item 5).
   it("a non-string identity is an invalid start, never coerced to a string", async () => {
     const bad = [
-      { studio: { onboardingId: "abc", deploymentId: 412 } },
+      { studio: { onboardingId: "abc", deploymentId: 412.5 } },
       { onboarding: { key: "main", version: null } },
       { onboarding: { key: "main", version: 3 } },
       { onboarding: { key: null, version: "3" } },

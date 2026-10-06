@@ -139,7 +139,7 @@ onboardingRun.start({
 ```
 
 - **`onboarding.version` must change whenever the manifest or a question's keys change.**
-- **Studio-served flows** may omit `onboarding`. The key then defaults to `studio.onboardingId`, and the version to `studio.deploymentId`. A draft or preview (`draft: true`, or no deployment id) always sends version `"draft"`. A Studio-served run does not carry `variantKey`, because each Studio A/B arm is its own onboarding key.
+- **Studio-served flows** may omit `onboarding`. The key then defaults to `studio.onboardingId`, and the version to `studio.deploymentId`. Studio ids are strings. A number passed at run time (from untyped JSON, for example) is sent as its decimal string when it is a safe non-negative integer; any other number makes the start invalid. Leave `studio` out rather than passing null. A draft or preview (`draft: true`, or no deployment id) always sends version `"draft"`. A Studio-served run does not carry `variantKey`, because each Studio A/B arm is its own onboarding key.
 - **Each `start` is a new run** with a new `run_id`, including a replay. A run already in progress is left as it was, and counts as quit once the server's threshold passes.
 - **Invalid input is never sent.** The tracker checks the manifest, identity and context against the contract. If any is invalid, `start` returns a run that records nothing and reports `invalid-start`. Invalid properties are dropped one by one.
 
@@ -211,7 +211,6 @@ Unlike the limits above, which come from the contract, these are the tracker's o
 - **Slow storage.** If the stored state is not read within `storageReadTimeoutMs` (default 5,000 ms), `resume()` resolves null, and keeps resolving null for the rest of the session, even once the read lands. The run that was in progress is not resumed. Writes go on once the read lands, so a run started in the meantime is what the next launch finds.
 - **No working storage at dispose.** `dispose()` gives each unsent snapshot one last attempt and keeps the ones the sink does not take in storage. Without storage, with persistence off for the session (storage that cannot be read, or a stored format this version does not know), with a write that never finishes, or with a write that lands after a new tracker on the same `storageKey` stopped waiting for it and is then overwritten by that tracker's next write (see the first limit), a snapshot whose last attempt fails is lost, a completion included. `configure()` disposes the tracker it replaces, so this applies to a reconfigure too.
 - **The resumed screen.** `resume()` records the restored screen as a new entry for the last recorded step. There is no way to name a different screen. A truncated run records no entry at all, and its `currentStepKey` is the last step recorded before the limit.
-- **Numeric Studio ids.** `onboardingId`, `deploymentId` and `audienceId` are strings. The contract sends a numeric Studio id in decimal, but the tracker does not convert one: a number passed at run time (from untyped JSON, for example), or `studio: null`, makes the start invalid, so it reports `invalid-start` and records nothing. Pass `String(id)`, and leave `studio` out rather than passing null. An id above `Number.MAX_SAFE_INTEGER` is already wrong as a number, so it must reach the app as a string.
 
 ## Rocalytics client
 

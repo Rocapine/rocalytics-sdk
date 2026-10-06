@@ -26,7 +26,6 @@ describe("the README's known limits of the tracker", () => {
     "Slow storage.",
     "No working storage at dispose.",
     "The resumed screen.",
-    "Numeric Studio ids.",
   ])("names the limit %s", (label) => {
     expect(section).toContain(`**${label}**`);
   });
@@ -171,12 +170,29 @@ describe("item 4: resuming a truncated run", () => {
   });
 });
 
-describe("item 5: Studio links must be strings, and studio an object or absent", () => {
+describe("item 5 (fixed): a numeric Studio id is sent in decimal", () => {
+  it.each([
+    ["onboardingId", { studio: { onboardingId: 87 } }, { onboarding_id: "87" }, { key: "87", version: "draft" }],
+    ["deploymentId", { studio: { onboardingId: "87", deploymentId: 412 } }, { onboarding_id: "87", deployment_id: "412" }, { key: "87", version: "412" }],
+    ["audienceId", { onboarding: IDENTITY, studio: { audienceId: 5 } }, { audience_id: "5" }, { key: "main", version: "3" }],
+    ["each id at once, 0 included", { studio: { onboardingId: 0, deploymentId: Number.MAX_SAFE_INTEGER, audienceId: 0 } }, { onboarding_id: "0", deployment_id: "9007199254740991", audience_id: "0" }, { key: "0", version: "9007199254740991" }],
+  ])("%s as a number, passed at run time, is sent as its decimal string", async (_, options, studio, onboarding) => {
+    const h = harness();
+    const run = h.tracker.start({ ...options, manifest: MANIFEST } as unknown as StartOptions);
+    run.enterStep("welcome");
+    await h.tick();
+    expect(h.diagnostics.map((d) => d.code)).not.toContain("invalid-start");
+    expect(h.sink.last!.studio).toEqual(studio);
+    expect(h.sink.last!.onboarding).toEqual(onboarding);
+  });
+
   it.each([
     ["studio: null", { onboarding: IDENTITY, studio: null }],
-    ["a numeric onboardingId", { studio: { onboardingId: 87 } }],
-    ["a numeric deploymentId", { studio: { onboardingId: "87", deploymentId: 412 } }],
-    ["a numeric audienceId", { onboarding: IDENTITY, studio: { audienceId: 5 } }],
+    ["a fractional deploymentId", { studio: { onboardingId: "87", deploymentId: 412.5 } }],
+    ["a negative onboardingId", { studio: { onboardingId: -87 } }],
+    ["a NaN audienceId", { onboarding: IDENTITY, studio: { audienceId: NaN } }],
+    ["an infinite audienceId", { onboarding: IDENTITY, studio: { audienceId: Infinity } }],
+    ["an unsafe integer deploymentId", { studio: { onboardingId: "87", deploymentId: 2 ** 53 } }],
   ])("%s is an invalid start: nothing is recorded", async (_, options) => {
     const h = harness();
     const run = h.tracker.start({ ...options, manifest: MANIFEST } as unknown as StartOptions);
