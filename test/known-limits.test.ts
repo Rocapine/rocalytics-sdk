@@ -283,6 +283,27 @@ describe("item 1 (fixed): a handoff through trackers created and disposed withou
     return { time, inner, storage: withStorage ? inner : undefined, a, old };
   }
 
+  it("an idle tracker disposed seconds before the next one is created still passes on the old tracker's writes still to land", async () => {
+    const { time, inner, a, old } = await setUp(true);
+    old.enterStep("goal"); // seq 2; its write lands 30 s later
+    await a.tick(2000);
+    a.tracker.dispose();
+    harness({ storage: inner, time, storageReadTimeoutMs: 1000 }).tracker.dispose(); // B: idle
+    await a.tick(5000); // B's own writes are long done
+
+    const c = harness({ storage: inner, time, storageReadTimeoutMs: 1000 });
+    const resumed = await c.tracker.resume();
+    expect(resumed?.runId).toBe(old.runId);
+    await c.tick(60_000); // A's late write lands over C's state; C writes it again
+    await c.tracker.idle();
+    c.kill();
+
+    const next = harness({ storage: inner, time: new ManualTime(time.clock.now() + 60_000), create: await freshProcess() });
+    expect((await next.tracker.resume())?.runId).toBe(old.runId);
+    await next.tick(0);
+    expect(next.sink.last!.steps.map((e) => e.step_key)).toEqual(["welcome", "goal", "goal", "goal"]);
+  });
+
   describe.each([1, 2])("through %i idle tracker(s)", (idle) => {
     it.each([true, false])("a run in progress is resumed from its newest state (storage: %s)", async (withStorage) => {
       const { time, inner, storage, a, old } = await setUp(withStorage);
