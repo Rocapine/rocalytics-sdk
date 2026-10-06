@@ -46,9 +46,10 @@ export function setUpTracking(storage: KeyValueStorage, device: { appVersion: st
 }
 
 // 2. When the onboarding opens: resume the killed run if the app restores
-//    the user's position, otherwise start a new one.
-export async function openOnboarding(restorePosition: boolean): Promise<OnboardingRun> {
-  const resumed = restorePosition ? await onboardingRun.resume() : null;
+//    the user's position, otherwise start a new one. resume() waits for
+//    storage however long it takes, so stop waiting after a few seconds.
+export async function openOnboarding(restorePosition: boolean, resumeTimeoutMs = 3000): Promise<OnboardingRun> {
+  const resumed = restorePosition ? await resumeWithin(resumeTimeoutMs) : null;
   // Resumed: show the screen your own navigation state restored. The tracker
   // records it as a new entry for its last recorded step (none if truncated).
   if (resumed) return resumed;
@@ -67,6 +68,12 @@ export async function openOnboarding(restorePosition: boolean): Promise<Onboardi
     },
     properties: { signup_source: "email" },
   });
+}
+
+function resumeWithin(ms: number): Promise<OnboardingRun | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => (timer = setTimeout(() => resolve(null), ms)));
+  return Promise.race([onboardingRun.resume(), timeout]).finally(() => clearTimeout(timer));
 }
 
 // 3. Each screen reports when it is shown and when the user leaves it.

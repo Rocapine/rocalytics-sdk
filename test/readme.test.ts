@@ -37,4 +37,17 @@ describe("the README's hand-coded onboarding example", () => {
     expect(sink.last!.steps.map((s) => s.step_key)).toEqual(path_);
     onboardingRun.dispose();
   });
+
+  it("with a storage read that never answers, opening with restorePosition falls back to start() after its timeout", async () => {
+    const time = new ManualTime();
+    const sink = new MemorySink<OnboardingRunSnapshot>();
+    const hung = { getItem: () => new Promise<string | null>(() => {}), setItem: () => {}, removeItem: () => {} };
+    // Its own key: nothing on this storage ever settles.
+    onboardingRun.configure({ sink, context: CONTEXT, storage: hung, storageKey: "test:example-hung", clock: time.clock, timers: time.timers, debounceMs: 0, onDiagnostic: () => {} });
+    const run = await openOnboarding(true, 10); // a real 10 ms timeout: resume() alone would never resolve
+    walkThrough(run, "practice", true);
+    await time.advance(1000); // persistTimeoutMs: sends do not wait for the read
+    expect(sink.last!.status).toBe("completed");
+    onboardingRun.dispose();
+  });
 });
