@@ -125,7 +125,7 @@ That run produces one payload per send. The completed one lists `welcome`, `goal
 - writes already queued still land;
 - each unsent snapshot gets one last attempt.
 
-A snapshot the sink does not take is then **handed, in memory, to the next tracker created on the same `storageKey`**, as `configure()` does. That tracker sends it with its own sink and retries, with or without storage. It sends none of the old tracker's snapshots, handed over or read from storage, until the old tracker's last attempts are answered (each within `attemptTimeoutMs`), and it drops any snapshot one of them delivered, so a reconfigure sends each snapshot once. If one of the old tracker's writes lands after the new tracker has read storage (past the bounded wait), the new tracker writes its own state again once it has a run, so the next launch still finds that run.
+A snapshot the sink does not take is then **handed, in memory, to the next tracker created on the same `storageKey`**, as `configure()` does. That tracker sends it with its own sink and retries, with or without storage. It sends none of the old tracker's snapshots, handed over or read from storage, until the old tracker's last attempts are answered (each within `attemptTimeoutMs`), and it drops any snapshot one of them delivered, so a reconfigure sends each snapshot once. The old tracker's run is handed over too, in its newest state: the new tracker's `resume()` returns it, with storage or without, and returns null if the old tracker completed it or started another. So a write of the old tracker's that lands after the new tracker read storage (past the bounded wait) can neither be resumed from an older state nor hide the newer one: the new tracker writes its own state again as each such write lands, once it has a run or was handed one.
 
 With working storage, an unsent snapshot also stays in storage for the next launch. The next launch may send again a snapshot that the sink took during `dispose()`, with the same `seq` and body, which the ingest ignores. Without working storage, only a tracker created in the same process gets it (see [Known limits of the tracker](#known-limits-of-the-tracker)).
 
@@ -171,6 +171,8 @@ The tracker assumes the app restores the screen of the last recorded entry. **A 
 
 If the app does not restore the position, call `start()` instead.
 
+After a reconfigure, `resume()` returns the run the disposed tracker on the same `storageKey` was recording, if it is still in progress, in the newest state that tracker had, whether or not storage is configured.
+
 `resume()` waits for the stored state to be read, however long the storage takes; a read slower than `storageReadTimeoutMs` is reported, not abandoned. **A storage that never answers the read means `resume()` never resolves.** An app that cannot wait should race it with its own timeout, and call `start()` if the timeout wins: `start()` never waits for the read. The run it starts is sent as usual, and stored once the read lands.
 
 ## Delivery
@@ -211,7 +213,6 @@ When recording one more entry, answer or property change would cross a limit, th
 
 Unlike the limits above, which come from the contract, these are the tracker's own. Each is intended in this release, and a test pins it.
 
-- **A late write from a replaced tracker, then `resume()`.** A tracker created on a `storageKey` whose previous tracker was disposed (as `configure()` does) waits for that tracker's queued writes before it reads, but only up to the old tracker's `idle()` bound: about twice `storageReadTimeoutMs`. If a write takes longer and the new tracker calls `resume()` rather than `start()`, it resumes the old run from the older state it read, even if that run has since been completed, and the resumed run's first send can reuse the seq of the old tracker's last send with a different body. Calling `start()` instead is not affected: the old run's unsent snapshots are handed over and delivered once, and the new tracker writes its state again when the late write lands.
 - **An app killed without working storage.** A snapshot the sink has not taken survives the end of the process only in storage. When the app is killed without storage, with persistence off for the session (storage that cannot be read, or a stored format this version does not know), or with a write that never finishes, such a snapshot is lost, a completion included. The same holds after a `dispose()` when no tracker is created on its `storageKey` before the app is killed. A reconfigure loses nothing: `dispose()` hands what is unsent to the next tracker in memory (see `dispose()` above).
 - **The resumed screen.** `resume()` records the restored screen as a new entry for the last recorded step. There is no way to name a different screen. A truncated run records no entry at all, and its `currentStepKey` is the last step recorded before the limit.
 

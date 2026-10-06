@@ -23,7 +23,6 @@ describe("the README's known limits of the tracker", () => {
   });
 
   it.each([
-    "A late write from a replaced tracker, then `resume()`.",
     "An app killed without working storage.",
     "The resumed screen.",
   ])("names the limit %s", (label) => {
@@ -122,11 +121,9 @@ describe("item 1 (fixed): a replaced tracker's write that lands after the new tr
   });
 });
 
-describe("item 1, still a limit: the new tracker calls resume() before a late write of the replaced tracker lands", () => {
-  // The new tracker reads the state the replaced one wrote before the slow
-  // write: its run still in progress. resume() returns that run, though it was
-  // completed, and its restore send reuses the completion's seq.
-  it("resumes the replaced tracker's completed run from the older state it read", async () => {
+describe("item 1 (fixed): the new tracker calls resume() before a late write of the replaced tracker lands", () => {
+  /** Tracker A, whose writes land 30 s late once `slow` is set, with storage or without. */
+  async function setUp(withStorage: boolean) {
     const time = new ManualTime();
     const inner = memoryStorage();
     const state = { slow: false };
@@ -134,12 +131,21 @@ describe("item 1, still a limit: the new tracker calls resume() before a late wr
       setItem: (k: string, v: string) =>
         state.slow ? new Promise<void>((r) => time.timers.setTimeout(() => r(inner.setItem(k, v)), 30_000)) : inner.setItem(k, v),
     });
-    const a = harness({ storage: storageA, time, storageReadTimeoutMs: 1000 });
+    const storage = withStorage ? inner : undefined;
+    const a = harness({ storage: withStorage ? storageA : undefined, time, storageReadTimeoutMs: 1000 });
     const old = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
     old.enterStep("welcome");
     await a.tick(1000);
     await a.tracker.idle();
     state.slow = true;
+    return { time, inner, storage, a, old };
+  }
+
+  // The new tracker reads the state written before the slow write: the run
+  // still in progress at seq 1. It is handed the newer state instead.
+  it.each(["accepted", "transient"] as const)("a run the replaced tracker completed (last attempt %s) is not resumed, and its completion is delivered once", async (lastAttempt) => {
+    const { time, inner, a, old } = await setUp(true);
+    a.sink.respond = (body) => (body.status === "completed" ? { outcome: lastAttempt } : { outcome: "accepted" });
     old.complete(); // seq 2, completed; its write lands 30 s later
     a.tracker.dispose();
 
@@ -147,9 +153,42 @@ describe("item 1, still a limit: the new tracker calls resume() before a late wr
     let resumed: unknown = "pending";
     void b.tracker.resume().then((r) => (resumed = r));
     await b.tick(60_000);
-    expect((resumed as { runId: string } | null)?.runId).toBe(old.runId);
-    expect(a.sink.last).toMatchObject({ seq: 2, status: "completed" });
-    expect(b.sink.received.filter((s) => s.run_id === old.runId).map((s) => [s.seq, s.status])).toEqual([[2, "in_progress"]]);
+    expect(resumed).toBeNull();
+    await b.tracker.idle();
+    b.kill();
+
+    const next = harness({ storage: inner, time: new ManualTime(time.clock.now() + 60_000), create: await freshProcess() });
+    expect(await next.tracker.resume()).toBeNull();
+    await next.tick(60_000);
+    const sent = [...b.sink.received, ...next.sink.received].filter((s) => s.run_id === old.runId);
+    expect(sent.filter((s) => s.status === "in_progress")).toEqual([]); // no seq reused after completed
+    const accepted = (lastAttempt === "accepted" ? 1 : 0) + sent.filter((s) => s.status === "completed").length;
+    expect(accepted).toBe(1);
+  });
+
+  it.each([true, false])("a run still in progress is resumed from the replaced tracker's newest state (storage: %s), and its seq continues", async (withStorage) => {
+    const { time, inner, storage, a, old } = await setUp(withStorage);
+    old.enterStep("goal"); // seq 2; with storage, its write lands 30 s later
+    await a.tick(2000);
+    expect(a.sink.last).toMatchObject({ seq: 2, status: "in_progress" });
+    a.tracker.dispose();
+
+    const b = harness({ storage, time, storageReadTimeoutMs: 1000 });
+    let resumed: { runId: string } | null = null;
+    void b.tracker.resume().then((r) => (resumed = r));
+    await b.tick(5000);
+    expect(resumed!.runId).toBe(old.runId);
+    expect(b.sink.received.map((s) => [s.seq, s.steps.map((e) => e.step_key)])).toEqual([[3, ["welcome", "goal", "goal"]]]);
+    if (!withStorage) return;
+
+    await b.tick(30_000); // A's late write lands; B writes its own state again
+    await b.tracker.idle();
+    b.kill();
+    const next = harness({ storage: inner, time: new ManualTime(time.clock.now() + 60_000), create: await freshProcess() });
+    const again = await next.tracker.resume();
+    await next.tick(0);
+    expect(again?.runId).toBe(old.runId);
+    expect(next.sink.last!.seq).toBe(4);
   });
 });
 

@@ -30,7 +30,8 @@ export interface TrackerConfig {
   /**
    * Persists the run so it can be resumed after the app is killed, and keeps an
    * unsent snapshot across restarts. AsyncStorage fits as is. Without it,
-   * nothing survives a restart and `resume()` always resolves null.
+   * nothing survives a restart, and `resume()` resolves null unless a tracker
+   * disposed in this process on the same `storageKey` handed it a run.
    */
   storage?: KeyValueStorage;
   /** Storage key. Default `studio-sdk:onboarding-run`. One restorable run per key. */
@@ -109,6 +110,10 @@ export interface OnboardingRunTracker {
    * recorded step. A truncated run is still returned (so it can complete) but
    * records no new entry. Null once a run was started this session.
    *
+   * After a reconfigure, the run is the one the disposed tracker on this
+   * `storageKey` was recording, in its newest state, with storage or without;
+   * null if that tracker completed it or started another.
+   *
    * It waits for the stored state to be read, however long that takes: a
    * storage that never answers the read means it never resolves. An app that
    * cannot wait should race it with its own timeout and call `start` instead.
@@ -161,13 +166,16 @@ interface Handoff {
 // passes (a fresh adapter on every configure() included):
 // - the last disposed tracker's writes: `drain`, bounded by its idle(), which a
 //   new tracker's first read waits for, so it sees what the old one staged;
-//   and `landed`, unbounded, so a new tracker that read before they landed
-//   writes its own state again;
-// - what the last disposed tracker leaves unsent, with storage or without,
-//   resolved once its last attempts are over and taken by the next tracker;
+//   `landed`, unbounded; and each queued write, so a new tracker that read
+//   before one landed writes its own state again;
+// - what the last disposed tracker hands over, with storage or without, taken
+//   by the next tracker: its run, when it started or resumed one (null once
+//   that run is completed or replaced), known at dispose() and newer than any
+//   write of it still to land; and what it leaves unsent, resolved once its
+//   last attempts are over;
 // - how many live trackers use the key: two at once overwrite each other.
-const lastDrainOnKey = new Map<string, { drain: Promise<void>; landed: Promise<void> }>();
-const handoffOnKey = new Map<string, Promise<Handoff>>();
+const lastDrainOnKey = new Map<string, { drain: Promise<void>; landed: Promise<void>; writes: Promise<void>[] }>();
+const handoffOnKey = new Map<string, { run?: { current: RunState | null }; left: Promise<Handoff> }>();
 const liveOnKey = new Map<string, number>();
 
 export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRunTracker {
@@ -208,9 +216,14 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
   const settledSeqs = new Map<string, number>();
   // Sends waiting for their snapshot's write (at most persistTimeoutMs).
   const staging = new Set<Promise<void>>();
+  // Writes queued and not yet done.
+  const writing = new Set<Promise<void>>();
   // Taken once: a later tracker on this key gets this one's handoff, not the predecessor's.
-  const predecessor = handoffOnKey.get(storageKey);
+  const handed = handoffOnKey.get(storageKey);
   handoffOnKey.delete(storageKey);
+  const predecessor = handed?.left;
+  // The predecessor's run: when set, it replaces the stored one, which a late write may not have updated.
+  const handedRun = handed?.run;
   const priorWrites = store ? lastDrainOnKey.get(storageKey) : undefined;
   // Stored outboxes read before the predecessor's last attempts were over: kept, and sent after them.
   const heldBack = new Map<string, Outbound<OnboardingRunSnapshot>>();
@@ -219,7 +232,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
   // A run was started (or resumed) this session: the previous launch's run is then abandoned,
   // whether or not the run started here is still live.
   let startedThisSession = false;
-  let persistedCurrent: RunState | null = null;
+  let persistedCurrent: RunState | null = handedRun?.current ?? null;
   let disposed = false;
 
   const mintRunId = () => {
@@ -287,7 +300,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
             } else if (disposed) outboxes.set(runId, item);
             else deliveryFor(runId).enqueue(item);
           }
-          if (current && current.status === "in_progress") {
+          if (current && current.status === "in_progress" && !handedRun) {
             if (!startedThisSession) persistedCurrent = current;
             else sendAbandoned(current); // a new run started before storage was read
           }
@@ -330,15 +343,18 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
         })
     : Promise.resolve();
 
-  // A predecessor's write that lands after this tracker read storage replaces
-  // what it wrote: once this tracker has a run of its own, it writes its state
-  // again. (Before that, start() or resume() writes it anyway.)
+  // Each predecessor write that lands after this tracker read storage replaces
+  // what it wrote: this tracker writes its state again once it holds a state
+  // at least as new, that is once it has a run of its own or was handed the
+  // predecessor's. (Otherwise start() or resume() writes it anyway.)
   if (priorWrites) {
     let drained = false;
     void priorWrites.drain.then(() => (drained = true));
-    void priorWrites.landed.then(() => {
-      if (drained && startedThisSession) persist();
-    });
+    for (const write of priorWrites.writes) {
+      void write.then(() => {
+        if (drained && (startedThisSession || handedRun)) persist();
+      });
+    }
   }
 
   /**
@@ -398,10 +414,13 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
    */
   const persist = (): Promise<void> => {
     if (!store || disposed) return Promise.resolve();
-    return store.saveWith(async () => {
+    const write = store.saveWith(async () => {
       await loaded;
       return persistenceOff ? undefined : compose();
     });
+    writing.add(write);
+    void write.then(() => writing.delete(write));
+    return write;
   };
 
   /**
@@ -735,12 +754,15 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
       // tracker on this key, and stays in storage for the next launch.
       disposed = true;
       for (const d of deliveries.values()) d.close();
-      handoffOnKey.set(storageKey, leftUnsent());
+      handoffOnKey.set(storageKey, {
+        run: startedThisSession ? { current: live && live.state.status === "in_progress" ? live.state : null } : undefined,
+        left: leftUnsent(),
+      });
       if (store) {
         liveOnKey.set(storageKey, Math.max(0, (liveOnKey.get(storageKey) ?? 1) - 1));
         // The next tracker on this key reads only after these writes (bounded by idle()).
         const landed = writesDone().catch(() => undefined);
-        const entry = { drain: idleWithin(landed).catch(() => undefined), landed };
+        const entry = { drain: idleWithin(landed).catch(() => undefined), landed, writes: [...writing] };
         lastDrainOnKey.set(storageKey, entry);
         void landed.then(() => {
           if (lastDrainOnKey.get(storageKey) === entry) lastDrainOnKey.delete(storageKey);
