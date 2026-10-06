@@ -75,6 +75,44 @@ describe("item 1: a replaced tracker's write that lands after the new tracker's 
     const resumed = await next.tracker.resume();
     expect(resumed?.runId === fresh.runId).toBe(resumable);
   });
+
+  // The same late write, when the replaced tracker's completion was not taken
+  // at dispose: it lands in storage, but the new tracker never read it, so the
+  // new tracker's next write (any change) composes only its own outboxes and
+  // erases it. Without that next write, the next launch still delivers it.
+  it.each([
+    [true, 0],
+    [false, 1],
+  ] as const)("the new tracker writes again: %s, so the next launch delivers %i completion of the old run", async (writesAgain, delivered) => {
+    const { time, inner, state, storageA } = setUp(30_000);
+    const a = harness({ storage: storageA, time, storageReadTimeoutMs: 1000 });
+    a.sink.respond = () => ({ outcome: "transient" });
+    const old = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    old.enterStep("welcome");
+    await a.tick(1000);
+    await a.tracker.idle();
+
+    state.slow = true;
+    old.complete();
+    a.tracker.dispose(); // one last attempt, answered transient, and a write that lands past B's bound
+
+    const b = harness({ storage: inner, time, storageReadTimeoutMs: 1000 });
+    const fresh = b.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    fresh.enterStep("welcome");
+    await b.tick(5000); // B has read storage, before A's write lands
+    await b.tick(30_000); // A's write lands now, holding the old run's completion
+    if (writesAgain) {
+      fresh.enterStep("goal");
+      await b.tick(1000);
+      await b.tracker.idle();
+    }
+    b.kill();
+
+    const next = harness({ storage: inner, time: new ManualTime(time.clock.now() + 60_000) });
+    await next.tick(60_000);
+    const completions = next.sink.received.filter((s) => s.run_id === old.runId && s.status === "completed");
+    expect(completions).toHaveLength(delivered);
+  });
 });
 
 describe("item 3: a completion whose last attempt at dispose() fails", () => {
@@ -100,6 +138,9 @@ describe("item 3: a completion whose last attempt at dispose() fails", () => {
     expect(await disposeThenRelaunch(memoryStorage())).toHaveLength(1);
   });
 
+  // Without storage the relaunch starts empty, so its 0 cannot fail on its own:
+  // what pins the loss is the helper's checks that the one last attempt was the
+  // only one and that no retry timer is left.
   it("is lost without storage", async () => {
     expect(await disposeThenRelaunch(undefined)).toHaveLength(0);
   });
