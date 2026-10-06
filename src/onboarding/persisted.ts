@@ -8,6 +8,8 @@ import type { RunState } from "./state";
 
 export interface Persisted {
   format: 1;
+  /** The destination of the sink of the tracker that wrote it; absent when that sink had none. */
+  destination?: string;
   current: RunState | null;
   outboxes: Record<string, Outbound<OnboardingRunSnapshot>>;
 }

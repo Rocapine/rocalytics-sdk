@@ -1,0 +1,317 @@
+// A sink's destination: a reconfigure hands nothing to a tracker that sends
+// somewhere else, and stored state written for one destination is never sent
+// to another. Test runs sent to a staging collector must never reach the
+// production one because both trackers used the same storageKey.
+import { describe, expect, it } from "vitest";
+import { createHttpSink, memoryStorage } from "../src/core";
+import { RocalyticsClient, createRocalyticsOnboardingSink } from "../src/rocalytics";
+import type { OnboardingRunSnapshot } from "../src/onboarding";
+import { ManualTime, MemorySink } from "./fakes";
+import { IDENTITY, MANIFEST, freshProcess, harness } from "./harness";
+
+const KEY = "studio-sdk:onboarding-run";
+const STAGING = "https://staging.example.com/v1/onboarding-runs";
+const PRODUCTION = "https://collector.example.com/v1/onboarding-runs";
+
+const fakeFetch = async () => ({ text: async () => "" });
+/** The destination createHttpSink gives `url`, with the global fetch or an injected one. */
+const httpDestination = (url: string, injectedFetch: boolean) => createHttpSink(injectedFetch ? { url, fetch: fakeFetch } : { url }).destination!;
+
+describe("the stock sinks' destination", () => {
+  it("createHttpSink: its URL, marked when a fetch is injected, which may never reach that URL", () => {
+    expect(createHttpSink({ url: PRODUCTION }).destination).toBe(PRODUCTION);
+    expect(createHttpSink({ url: PRODUCTION, fetch: fakeFetch }).destination).toBe(`${PRODUCTION} (custom fetch)`);
+  });
+
+  it("createRocalyticsOnboardingSink: the client's onboarding endpoint, marked when the client has an injected fetch", () => {
+    const ENDPOINT = "https://rocalytics-api.rocapine.io/functions/v1/onboarding-response";
+    const client = new RocalyticsClient({ onDiagnostic: () => {} });
+    expect(createRocalyticsOnboardingSink(client).destination).toBe(ENDPOINT);
+    // A new sink object on each call, and on each new client: the same destination, so a reconfigure hands over.
+    expect(createRocalyticsOnboardingSink(client).destination).toBe(createRocalyticsOnboardingSink(new RocalyticsClient({ onDiagnostic: () => {} })).destination);
+    expect(createRocalyticsOnboardingSink(new RocalyticsClient({ baseUrl: "https://staging.rocapine.io", onDiagnostic: () => {} })).destination).toBe(
+      "https://staging.rocapine.io/functions/v1/onboarding-response",
+    );
+    const mocked = new RocalyticsClient({ fetch: async () => ({ ok: true, status: 204, json: async () => ({}) }) as never, onDiagnostic: () => {} });
+    expect(createRocalyticsOnboardingSink(mocked).destination).toBe(`${ENDPOINT} (custom fetch)`);
+  });
+});
+
+/**
+ * Tracker A on the staging destination leaves, in storage and in memory, an
+ * in-progress run and another run's completion its sink did not take. Its
+ * writes take `writeMs` once A is done.
+ */
+async function stagingLeftovers(writeMs: number, destination: string | null = STAGING) {
+  const time = new ManualTime();
+  const inner = memoryStorage();
+  const state = { slow: false };
+  const storageA = Object.assign({}, inner, {
+    setItem: (k: string, v: string) =>
+      state.slow && writeMs > 0 ? new Promise<void>((r) => time.timers.setTimeout(() => r(inner.setItem(k, v)), writeMs)) : inner.setItem(k, v),
+  });
+  const a = harness({ storage: storageA, time, destination, storageReadTimeoutMs: 1000 });
+  a.sink.respond = (body) => (body.status === "completed" ? { outcome: "transient" } : { outcome: "accepted" });
+  const done = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+  done.enterStep("welcome");
+  done.complete();
+  await a.tick(1000);
+  const open = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+  open.enterStep("welcome");
+  await a.tick(1000);
+  await a.tracker.idle();
+  state.slow = true;
+  open.enterStep("goal"); // its write takes writeMs
+  await a.tick(0);
+  return { time, inner, a, runs: [done.runId, open.runId] };
+}
+
+const fromRuns = (runs: string[], received: { run_id: string }[]) => received.filter((s) => runs.includes(s.run_id));
+
+describe("a reconfigure to another destination", () => {
+  it.each([0, 30_000])("hands nothing over, and sends nothing of the old tracker's, stored or in memory (writes taking %i ms)", async (writeMs) => {
+    const { time, inner, a, runs } = await stagingLeftovers(writeMs);
+    a.tracker.dispose();
+
+    const b = harness({ storage: inner, time, destination: PRODUCTION, storageReadTimeoutMs: 1000 });
+    let resumed: unknown = "pending";
+    void b.tracker.resume().then((r) => (resumed = r));
+    await b.tick(60_000); // any late write of A's lands
+    expect(resumed).toBeNull();
+    expect(fromRuns(runs, b.sink.received)).toEqual([]);
+    expect(b.diagnostics.filter((d) => d.code === "destination-changed")).toHaveLength(1); // once, not again for the stored state
+    await b.tracker.idle();
+    expect(inner.dump()[KEY] ?? "").not.toMatch(new RegExp(runs.join("|"))); // discarded, a late write's included
+    b.kill();
+
+    // Nor does the next launch, on the production destination.
+    const next = harness({ storage: inner, time: new ManualTime(time.clock.now() + 60_000), destination: PRODUCTION, create: await freshProcess() });
+    expect(await next.tracker.resume()).toBeNull();
+    await next.tick(60_000);
+    expect(fromRuns(runs, next.sink.received)).toEqual([]);
+  });
+
+  it("a new run started before the read is sent, and nothing of the old tracker's", async () => {
+    const { time, inner, a, runs } = await stagingLeftovers(30_000);
+    a.tracker.dispose();
+    const b = harness({ storage: inner, time, destination: PRODUCTION, storageReadTimeoutMs: 1000 });
+    const fresh = b.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    fresh.enterStep("welcome");
+    await b.tick(60_000);
+    expect(b.sink.received.map((s) => s.run_id)).toEqual([fresh.runId]);
+    expect(fromRuns(runs, b.sink.received)).toEqual([]);
+    await b.tracker.idle();
+    b.kill();
+    const next = harness({ storage: inner, time: new ManualTime(time.clock.now() + 60_000), destination: PRODUCTION, create: await freshProcess() });
+    expect((await next.tracker.resume())?.runId).toBe(fresh.runId);
+  });
+
+  it("without storage: nothing is handed over", async () => {
+    const time = new ManualTime();
+    const a = harness({ storage: undefined, time, destination: STAGING });
+    a.sink.respond = () => ({ outcome: "transient" });
+    const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    await a.tick(1000);
+    a.tracker.dispose();
+    const b = harness({ storage: undefined, time, destination: PRODUCTION });
+    expect(await b.tracker.resume()).toBeNull();
+    await b.tick(60_000);
+    expect(b.sink.received).toEqual([]);
+  });
+
+  it("through an idle tracker: nothing reaches the tracker after it either", async () => {
+    const { time, inner, a, runs } = await stagingLeftovers(30_000);
+    a.tracker.dispose();
+    harness({ storage: inner, time, destination: PRODUCTION, storageReadTimeoutMs: 1000 }).tracker.dispose();
+    const c = harness({ storage: inner, time, destination: PRODUCTION, storageReadTimeoutMs: 1000 });
+    let resumed: unknown = "pending";
+    void c.tracker.resume().then((r) => (resumed = r));
+    await c.tick(60_000);
+    expect(resumed).toBeNull();
+    expect(fromRuns(runs, c.sink.received)).toEqual([]);
+    await c.tracker.idle();
+    c.kill();
+    const next = harness({ storage: inner, time: new ManualTime(time.clock.now() + 60_000), destination: PRODUCTION, create: await freshProcess() });
+    await next.tick(60_000);
+    expect(fromRuns(runs, next.sink.received)).toEqual([]);
+  });
+
+  it("sinks without a destination count as different unless they are the same object", async () => {
+    const { time, inner, a, runs } = await stagingLeftovers(0, null);
+    a.tracker.dispose();
+    const b = harness({ storage: inner, time, destination: null });
+    await b.tick(60_000);
+    expect(fromRuns(runs, b.sink.received)).toEqual([]);
+    expect(b.diagnostics.map((d) => d.code)).toContain("destination-changed");
+  });
+});
+
+describe("a reconfigure to the same destination", () => {
+  it.each([
+    ["the same URL, on a fresh sink object", PRODUCTION, false],
+    ["no destination, the same sink object", null, true],
+  ] as const)("%s: the old tracker's unsent snapshots and run are handed over", async (_, destination, reuseSink) => {
+    const time = new ManualTime();
+    const storage = memoryStorage();
+    // With reuseSink, both trackers get one sink object, which forwards to the current MemorySink.
+    const target = { sink: new MemorySink<OnboardingRunSnapshot>() };
+    const shared = { send: (b: OnboardingRunSnapshot) => target.sink.send(b) };
+    const a = harness({ storage, time, destination, ...(reuseSink ? { sinkObject: shared } : {}) });
+    (reuseSink ? target.sink : a.sink).respond = () => ({ outcome: "transient" });
+    const done = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    done.enterStep("welcome");
+    done.complete();
+    const open = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    open.enterStep("welcome");
+    await a.tick(1000);
+    a.tracker.dispose();
+
+    target.sink = new MemorySink<OnboardingRunSnapshot>();
+    const b = harness({ storage, time, destination, ...(reuseSink ? { sinkObject: shared } : {}) });
+    const received = reuseSink ? target.sink.received : b.sink.received;
+    const resumed = await b.tracker.resume();
+    await b.tick(1000);
+    expect(resumed?.runId).toBe(open.runId);
+    expect(received.filter((s) => s.run_id === done.runId).map((s) => s.status)).toEqual(["completed"]);
+    expect(b.diagnostics.map((d) => d.code)).not.toContain("destination-changed");
+  });
+});
+
+describe("stored state written for another destination, at the next launch", () => {
+  /** Launch 1 on `first` leaves an in-progress run with a change it never sent, and an unsent completion, then is killed. */
+  async function killedLaunch(first: string | null) {
+    const time = new ManualTime();
+    const storage = memoryStorage();
+    const a = harness({ storage, time, destination: first, debounceMs: 5000 });
+    a.sink.respond = () => ({ outcome: "transient" });
+    const done = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    done.enterStep("welcome");
+    done.complete();
+    const open = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    open.enterStep("welcome"); // on the debounce: stored as a change never sent
+    await a.tick(1000);
+    await a.tracker.idle();
+    a.kill();
+    return { time, storage, runs: [done.runId, open.runId] };
+  }
+
+  it.each([
+    ["staging, then production", STAGING, PRODUCTION],
+    ["a sink without a destination (a mock), then production", null, PRODUCTION],
+    ["production, then a sink without a destination", PRODUCTION, null],
+    ["staging with an injected fetch, then production with an injected fetch", httpDestination(STAGING, true), httpDestination(PRODUCTION, true)],
+    ["a mock on the production URL (an injected fetch), then the real production sink", httpDestination(PRODUCTION, true), httpDestination(PRODUCTION, false)],
+  ] as const)("%s: discarded, never sent, and reported", async (_, first, second) => {
+    const { time, storage, runs } = await killedLaunch(first);
+    const next = harness({ storage, time: new ManualTime(time.clock.now() + 60_000), destination: second, create: await freshProcess() });
+    expect(await next.tracker.resume()).toBeNull();
+    next.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST }); // would send the abandoned run's unsent change
+    await next.tick(60_000);
+    expect(fromRuns(runs, next.sink.received)).toEqual([]);
+    expect(next.diagnostics.map((d) => d.code)).toContain("destination-changed");
+    await next.tracker.idle();
+    expect(storage.dump()[KEY] ?? "").not.toMatch(new RegExp(runs.join("|")));
+  });
+
+  it.each([
+    ["the same URL", PRODUCTION],
+    ["the same URL with an injected fetch both times", httpDestination(PRODUCTION, true)],
+    ["no destination either time (custom sinks)", null],
+  ] as const)("%s: kept and delivered", async (_, destination) => {
+    const { time, storage, runs } = await killedLaunch(destination);
+    const next = harness({ storage, time: new ManualTime(time.clock.now() + 60_000), destination, create: await freshProcess() });
+    expect((await next.tracker.resume())?.runId).toBe(runs[1]);
+    await next.tick(60_000);
+    expect(next.sink.received.some((s) => s.run_id === runs[0] && s.status === "completed")).toBe(true);
+  });
+});
+
+describe("diagnostics for stored state", () => {
+  it.each([
+    ["not an object", JSON.stringify([1, 2])],
+    ["a malformed part, unstamped", JSON.stringify({ format: 1, current: "nope", outboxes: {} })],
+  ])("%s: reported as storage, not destination-changed", async (_, raw) => {
+    const storage = memoryStorage();
+    storage.setItem(KEY, raw);
+    const h = harness({ storage, destination: PRODUCTION });
+    await h.tick(0);
+    const codes = h.diagnostics.map((d) => d.code);
+    expect(codes).toContain("storage");
+    expect(codes).not.toContain("destination-changed");
+  });
+});
+
+describe("the destination-changed diagnostic on a reconfigure", () => {
+  const reports = (h: { diagnostics: { code: string }[] }) => h.diagnostics.filter((d) => d.code === "destination-changed").length;
+
+  it.each([
+    ["the old tracker recorded nothing", false],
+    ["its completion was delivered, so storage is empty", true],
+  ])("nothing is left (%s): no diagnostic", async (_, completed) => {
+    const time = new ManualTime();
+    const storage = memoryStorage();
+    const a = harness({ storage, time, destination: STAGING });
+    if (completed) {
+      const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+      run.enterStep("welcome");
+      run.complete();
+    }
+    await a.tick(5000);
+    await a.tracker.idle();
+    a.tracker.dispose();
+    const b = harness({ storage, time, destination: PRODUCTION });
+    await b.tick(60_000);
+    expect(reports(b)).toBe(0);
+  });
+
+  it("a run in progress: reported once, at once", () => {
+    const time = new ManualTime();
+    const a = harness({ storage: undefined, time, destination: STAGING });
+    a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST }).enterStep("welcome");
+    a.tracker.dispose();
+    const b = harness({ storage: undefined, time, destination: PRODUCTION });
+    expect(reports(b)).toBe(1);
+  });
+
+  it.each([
+    ["transient", 1],
+    ["accepted", 0],
+  ] as const)("a completion whose last attempt answers %s after 2 s: reported %i time(s), once that answer is known", async (answer, expected) => {
+    const time = new ManualTime();
+    const a = harness({ storage: undefined, time, destination: STAGING });
+    a.sink.respond = (body) =>
+      body.status === "completed" ? new Promise((r) => time.timers.setTimeout(() => r({ outcome: answer }), 2000)) : { outcome: "accepted" };
+    const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    await a.tick(1000);
+    run.complete(); // in flight when A is disposed
+    a.tracker.dispose();
+    const b = harness({ storage: undefined, time, destination: PRODUCTION });
+    await b.tick(1000);
+    expect(reports(b)).toBe(0); // not known yet
+    await b.tick(60_000);
+    expect(reports(b)).toBe(expected);
+  });
+
+  it("only stored state is left (an idle old tracker over a previous launch's state): reported once, by the read", async () => {
+    const time = new ManualTime();
+    const storage = memoryStorage();
+    const earlier = harness({ storage, time, destination: STAGING });
+    earlier.sink.respond = () => ({ outcome: "transient" });
+    const run = earlier.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    run.complete();
+    await earlier.tick(1000);
+    await earlier.tracker.idle();
+    earlier.kill(); // a previous launch, stamped STAGING
+
+    const create = await freshProcess(); // the next launch, where A is configured, then replaced by B
+    const a = harness({ storage, time, destination: STAGING, create });
+    a.tracker.dispose(); // at once: it has read nothing, and leaves nothing in memory
+    const b = harness({ storage, time, destination: PRODUCTION, create });
+    expect(reports(b)).toBe(0);
+    await b.tick(60_000);
+    expect(reports(b)).toBe(1);
+  });
+});

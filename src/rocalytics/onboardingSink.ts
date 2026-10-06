@@ -113,7 +113,9 @@ export function rocalyticsOutcome(status: number, body?: unknown): SinkResult {
  *
  * While the client is inert every send is transient: the tracker keeps the
  * snapshot, persisted when it has storage, for a launch where the client works.
+ *
+ * Its `destination` is the client's `onboardingRunDestination`.
  */
 export function createRocalyticsOnboardingSink(client: RocalyticsClient): Sink<OnboardingRunSnapshot> {
-  return { send: (snapshot) => client.sendOnboardingRun(snapshot) };
+  return { destination: client.onboardingRunDestination, send: (snapshot) => client.sendOnboardingRun(snapshot) };
 }

@@ -46,6 +46,12 @@ export interface Delivery<T> {
    * A snapshot that still fails stays pending, so it is not lost.
    */
   close(): void;
+  /**
+   * Resolves once no attempt is in flight. After `close()` nothing is retried,
+   * so this is when the last attempts are over, and `pending()` is what the
+   * sink did not take.
+   */
+  idle(): Promise<void>;
 }
 
 /**
@@ -72,6 +78,7 @@ export function createDelivery<T>(options: DeliveryOptions<T>): Delivery<T> {
   let retryTimer: unknown = null;
   let stopped = false;
   let closed = false;
+  let idleWaiters: (() => void)[] = [];
 
   const safe = (fn: () => void) => {
     try {
@@ -106,6 +113,13 @@ export function createDelivery<T>(options: DeliveryOptions<T>): Delivery<T> {
       }
     });
 
+  const wakeIdle = () => {
+    if (inFlight) return;
+    const waiters = idleWaiters;
+    idleWaiters = [];
+    for (const resolve of waiters) resolve();
+  };
+
   const attempt = () => {
     if (stopped || inFlight || !pending) return;
     clearRetry();
@@ -117,7 +131,7 @@ export function createDelivery<T>(options: DeliveryOptions<T>): Delivery<T> {
         if (closed) {
           // No retry after close; a newer snapshot handed over meanwhile still gets its one attempt.
           if (pending && pending.seq > item.seq) attempt();
-          return;
+          return wakeIdle();
         }
         failures += 1;
         const delay = Math.min(max, initial * Math.pow(factor, failures - 1));
@@ -125,13 +139,14 @@ export function createDelivery<T>(options: DeliveryOptions<T>): Delivery<T> {
           retryTimer = null;
           attempt();
         }, delay);
-        return;
+        return wakeIdle();
       }
       failures = 0;
       settledSeq = Math.max(settledSeq, item.seq);
       if (pending && pending.seq <= item.seq) setPending(null);
       safe(() => options.onSettled?.(item, result));
       attempt(); // a newer snapshot may have arrived meanwhile
+      wakeIdle();
     });
   };
 
@@ -157,5 +172,10 @@ export function createDelivery<T>(options: DeliveryOptions<T>): Delivery<T> {
       clearRetry();
       attempt();
     },
+    idle: () =>
+      new Promise<void>((resolve) => {
+        idleWaiters.push(resolve);
+        wakeIdle();
+      }),
   };
 }

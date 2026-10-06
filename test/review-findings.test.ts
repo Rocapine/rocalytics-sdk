@@ -5,7 +5,7 @@ import { memoryStorage, type KeyValueStorage } from "../src/core";
 import type { OnboardingRunSnapshot, StartOptions } from "../src/onboarding";
 import { onboardingRun } from "../src/onboarding";
 import { ManualTime, MemorySink, flushMicrotasks } from "./fakes";
-import { CONTEXT, IDENTITY, MANIFEST, harness } from "./harness";
+import { CONTEXT, DESTINATION, IDENTITY, MANIFEST, freshProcess, harness } from "./harness";
 
 const KEY = "studio-sdk:onboarding-run";
 
@@ -20,9 +20,10 @@ describe("F1: a null Studio deployment id", () => {
     expect(h.sink.last!.studio).toEqual({ onboarding_id: "abc" });
   });
 
-  it("a non-string identity is an invalid start, never coerced to a string", async () => {
+  // Only a Studio id that is a safe non-negative integer is converted (known-limits.test.ts, item 5).
+  it("a non-string identity is an invalid start, and only a Studio id that is a safe non-negative integer is converted", async () => {
     const bad = [
-      { studio: { onboardingId: "abc", deploymentId: 412 } },
+      { studio: { onboardingId: "abc", deploymentId: 412.5 } },
       { onboarding: { key: "main", version: null } },
       { onboarding: { key: "main", version: 3 } },
       { onboarding: { key: null, version: "3" } },
@@ -92,13 +93,13 @@ describe("F2: malformed stored state", () => {
   };
 
   const blobs: [string, string][] = [
-    ["a null outbox item", JSON.stringify({ format: 1, current: null, outboxes: { x: null } })],
-    ["an outbox item with a string seq", JSON.stringify({ format: 1, current: null, outboxes: { x: { seq: "1", body: {} } } })],
-    ["an outbox item with no body", JSON.stringify({ format: 1, current: null, outboxes: { x: { seq: 1 } } })],
-    ["outboxes as an array", JSON.stringify({ format: 1, current: null, outboxes: [1, 2] })],
-    ["a dirty current with no steps", JSON.stringify({ format: 1, current: { status: "in_progress", dirty: true }, outboxes: {} })],
-    ["a current that is a string", JSON.stringify({ format: 1, current: "nope", outboxes: {} })],
-    ["a current whose steps are not a list", JSON.stringify({ format: 1, current: { status: "in_progress", dirty: true, steps: "x", lastSeq: 1, runId: "r" }, outboxes: {} })],
+    ["a null outbox item", JSON.stringify({ format: 1, destination: DESTINATION, current: null, outboxes: { x: null } })],
+    ["an outbox item with a string seq", JSON.stringify({ format: 1, destination: DESTINATION, current: null, outboxes: { x: { seq: "1", body: {} } } })],
+    ["an outbox item with no body", JSON.stringify({ format: 1, destination: DESTINATION, current: null, outboxes: { x: { seq: 1 } } })],
+    ["outboxes as an array", JSON.stringify({ format: 1, destination: DESTINATION, current: null, outboxes: [1, 2] })],
+    ["a dirty current with no steps", JSON.stringify({ format: 1, destination: DESTINATION, current: { status: "in_progress", dirty: true }, outboxes: {} })],
+    ["a current that is a string", JSON.stringify({ format: 1, destination: DESTINATION, current: "nope", outboxes: {} })],
+    ["a current whose steps are not a list", JSON.stringify({ format: 1, destination: DESTINATION, current: { status: "in_progress", dirty: true, steps: "x", lastSeq: 1, runId: "r" }, outboxes: {} })],
     ["a number", "42"],
     ["a list", "[]"],
     ["not JSON", "{not json"],
@@ -136,7 +137,7 @@ describe("F2: malformed stored state", () => {
 
   it("a valid outbox next to an invalid one is still delivered", async () => {
     const storage = memoryStorage();
-    storage.setItem(KEY, JSON.stringify({ format: 1, current: null, outboxes: { bad: null, [VALID_OUTBOX_BODY.run_id]: { seq: 3, body: VALID_OUTBOX_BODY } } }));
+    storage.setItem(KEY, JSON.stringify({ format: 1, destination: DESTINATION, current: null, outboxes: { bad: null, [VALID_OUTBOX_BODY.run_id]: { seq: 3, body: VALID_OUTBOX_BODY } } }));
     const h = harness({ storage });
     await h.tick();
     expect(h.sink.received).toEqual([VALID_OUTBOX_BODY]);
@@ -330,13 +331,13 @@ describe("B1: dispose() never loses a staged snapshot", () => {
     await a.tick(5000);
     expect(a.sink.received.map((s) => [s.seq, s.status])).toEqual([[1, "in_progress"], [2, "completed"]]);
 
-    const b = harness({ storage: a.storage, time: new ManualTime(time.clock.now() + 60_000) });
+    const b = harness({ storage: a.storage, time: new ManualTime(time.clock.now() + 60_000), create: await freshProcess() });
     expect(await b.tracker.resume()).toBeNull();
     await b.tick(60_000);
     expect(b.sink.received.every((s) => s.status === "completed" && s.seq === 2)).toBe(true);
   });
 
-  it("onboardingRun.configure() again right after complete(): the completion is not lost", async () => {
+  it("onboardingRun.configure() again right after complete(): the completion is delivered once", async () => {
     const time = new ManualTime();
     const storage = memoryStorage();
     const sink = new MemorySink<OnboardingRunSnapshot>();
@@ -348,11 +349,9 @@ describe("B1: dispose() never loses a staged snapshot", () => {
     run.complete();
     onboardingRun.configure(cfg); // disposes the first tracker
     await time.advance(5000);
-    // The new tracker may send the same completion again (no write after dispose
-    // records that it was accepted): same seq, same body, which the ingest ignores.
-    const completions = sink.received.filter((s) => s.status === "completed");
-    expect(completions.length).toBeGreaterThanOrEqual(1);
-    expect(new Set(completions.map((s) => JSON.stringify(s))).size).toBe(1);
+    // The stored state still holds the completion (no write after dispose records
+    // that it was accepted), but the new tracker learns that from the old one.
+    expect(sink.received.filter((s) => s.status === "completed")).toHaveLength(1);
     expect(await onboardingRun.resume()).toBeNull();
     await time.advance(60_000);
     expect(sink.received.filter((s) => s.status === "in_progress" && s.seq >= 2)).toEqual([]);
@@ -381,7 +380,8 @@ describe("B1: dispose() never loses a staged snapshot", () => {
 
   it("a completion the sink cannot take at dispose time is kept in storage and delivered by the next launch", async () => {
     const time = new ManualTime();
-    const a = harness({ time });
+    // Its own key: the next launch is another process, so this one's handoff is never taken.
+    const a = harness({ time, storageKey: "test:b1-next-launch" });
     a.sink.respond = () => ({ outcome: "transient" });
     const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
     run.enterStep("welcome");
@@ -392,7 +392,7 @@ describe("B1: dispose() never loses a staged snapshot", () => {
     expect(attempts).toBe(1); // one last attempt, then no retry timers after dispose
     expect(time.pendingTimers).toBe(0);
 
-    const b = harness({ storage: a.storage, time: new ManualTime(time.clock.now() + 60_000) });
+    const b = harness({ storage: a.storage, storageKey: "test:b1-next-launch", time: new ManualTime(time.clock.now() + 60_000), create: await freshProcess() });
     await b.tick(0);
     expect(b.sink.received.map((s) => s.status)).toEqual(["completed"]);
   });
@@ -445,7 +445,7 @@ describe("B2: a failed storage read never deletes or overwrites what it did not 
     steps: [{ step_key: "welcome", entered_at: "2026-01-10T07:00:00.000Z", exited_at: "2026-01-10T07:00:10.000Z", answers: [] }],
   });
   const RUN = "00000000-0000-4000-8000-0000000000cc";
-  const blob = JSON.stringify({ format: 1, current: null, outboxes: { [RUN]: { seq: 2, body: completedBody(RUN) } } });
+  const blob = JSON.stringify({ format: 1, destination: DESTINATION, current: null, outboxes: { [RUN]: { seq: 2, body: completedBody(RUN) } } });
 
   function flakyStorage(failures: number) {
     const inner = memoryStorage();
@@ -459,7 +459,7 @@ describe("B2: a failed storage read never deletes or overwrites what it did not 
     };
   }
 
-  it("a read that fails twice: the stored completion is left untouched, even after a whole run this session", async () => {
+  it("a read that fails twice: the stored completion is left untouched, even after a whole run this session, and the next tracker delivers both", async () => {
     const { inner, storage } = flakyStorage(2);
     const a = harness({ storage: storage as typeof inner });
     a.sink.respond = () => ({ outcome: "transient" });
@@ -473,9 +473,13 @@ describe("B2: a failed storage read never deletes or overwrites what it did not 
     expect(a.sink.received.some((s) => s.status === "completed")).toBe(true); // this session's run is still sent
     a.tracker.dispose();
 
+    // The next tracker reads the stored completion, and is handed this session's
+    // own one, which was never stored (persistence was off).
     const b = harness({ storage: inner });
     await b.tick(0);
-    expect(b.sink.received).toEqual([completedBody(RUN)]);
+    expect(b.sink.received).toContainEqual(completedBody(RUN));
+    expect(b.sink.received.filter((s) => s.run_id === run.runId).map((s) => s.status)).toEqual(["completed"]);
+    expect(b.sink.received).toHaveLength(2);
   });
 
   it("a read that fails once is retried, and the stored completion is delivered in the same session", async () => {
@@ -556,18 +560,18 @@ describe("R3 blocker: a reconfigure with a fresh storage adapter over the same s
 
   for (const delayMs of [0, 50]) {
     for (const firstSink of ["transient", "accepting"] as const) {
-      it(`${delayMs} ms storage, ${firstSink} first sink: the completed run is not resumed, and its completion is not lost`, async () => {
+      it(`${delayMs} ms storage, ${firstSink} first sink: the completed run is not resumed, and its completion is delivered once`, async () => {
         const time = new ManualTime();
         const inner = memoryStorage();
         const base = { context: CONTEXT, clock: time.clock, timers: time.timers, debounceMs: 0, onDiagnostic: () => {} };
-        const sinkA = new MemorySink<OnboardingRunSnapshot>();
+        const sinkA = Object.assign(new MemorySink<OnboardingRunSnapshot>(), { destination: "https://collector.example.com" }); // one destination, two sink objects
         if (firstSink === "transient") sinkA.respond = () => ({ outcome: "transient" });
         onboardingRun.configure({ ...base, sink: sinkA, storage: adapter(inner, time, delayMs) });
         const run = onboardingRun.start({ onboarding: IDENTITY, manifest: MANIFEST });
         run.enterStep("welcome");
         await time.advance(1000);
         run.complete();
-        const sinkB = new MemorySink<OnboardingRunSnapshot>();
+        const sinkB = Object.assign(new MemorySink<OnboardingRunSnapshot>(), { destination: "https://collector.example.com" }); // one destination, two sink objects
         onboardingRun.configure({ ...base, sink: sinkB, storage: adapter(inner, time, delayMs) });
 
         let resumed: unknown = "pending";
@@ -577,8 +581,10 @@ describe("R3 blocker: a reconfigure with a fresh storage adapter over the same s
         await time.advance(60_000);
         const all = [...sinkA.received, ...sinkB.received];
         expect(all.filter((s) => s.run_id === run.runId && s.status === "in_progress" && s.seq >= 2)).toEqual([]);
-        const delivered = all.some((s) => s.status === "completed") && (firstSink === "accepting" || sinkB.received.some((s) => s.status === "completed"));
-        expect(delivered).toBe(true);
+        const completions = (sink: MemorySink<OnboardingRunSnapshot>) => sink.received.filter((s) => s.status === "completed").length;
+        // Delivered exactly once: by A's sink when it accepts, otherwise by B's.
+        expect(completions(sinkB)).toBe(firstSink === "accepting" ? 0 : 1);
+        if (firstSink === "accepting") expect(completions(sinkA)).toBe(1);
         onboardingRun.dispose();
       });
     }
@@ -602,7 +608,7 @@ describe("R3 blocker: a reconfigure with a fresh storage adapter over the same s
   });
 });
 
-describe("N-a: a storage read that times out", () => {
+describe("N-a: a storage read slower than storageReadTimeoutMs", () => {
   function slowStorage(time: ManualTime, readDelayMs: number, initial?: string) {
     const inner = memoryStorage();
     if (initial) inner.setItem(KEY, initial);
@@ -612,11 +618,12 @@ describe("N-a: a storage read that times out", () => {
     return { inner, storage };
   }
 
-  it("resume() stays null for the rest of the session, even after the late read finds a run", async () => {
+  it("resume() waits for the read, past the bound, and resolves the run it finds; the slow read is reported", async () => {
     // A stored in-progress run, written by a previous launch.
     const time = new ManualTime();
     const prev = harness({ time });
-    prev.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST }).enterStep("welcome");
+    const old = prev.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    old.enterStep("welcome");
     await prev.tick();
     await prev.tracker.idle();
     prev.kill();
@@ -627,12 +634,27 @@ describe("N-a: a storage read that times out", () => {
     let first: unknown = "pending";
     void h.tracker.resume().then((r) => (first = r));
     await h.tick(1000);
-    expect(first).toBeNull();
+    expect(first).toBe("pending");
+    expect(h.diagnostics.some((d) => d.code === "storage" && /1000 ms/.test(d.message))).toBe(true);
     await h.tick(10_000); // the late read lands
-    expect(await h.tracker.resume()).toBeNull();
+    expect(first).not.toBe("pending");
+    expect((first as { runId: string } | null)?.runId).toBe(old.runId);
+    expect(h.sink.last!.run_id).toBe(old.runId);
+    expect(await h.tracker.resume()).toBeNull(); // once per session
   });
 
-  it("writes resume once the late read lands: a run started after the timeout is what the next launch finds", async () => {
+  it("a read that never answers: resume() never resolves", async () => {
+    const time = new ManualTime();
+    const storage = Object.assign(memoryStorage(), { getItem: () => new Promise<string | null>(() => {}) });
+    // Its own key: nothing here ever settles.
+    const h = harness({ storage, time, storageReadTimeoutMs: 1000, storageKey: "test:n-a-never" });
+    let resumed: unknown = "pending";
+    void h.tracker.resume().then((r) => (resumed = r));
+    await h.tick(600_000);
+    expect(resumed).toBe("pending");
+  });
+
+  it("start() is not held back by the slow read: a run started meanwhile is sent, and is what the next launch finds", async () => {
     const time = new ManualTime();
     const prev = harness({ time });
     const old = prev.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
@@ -643,18 +665,22 @@ describe("N-a: a storage read that times out", () => {
 
     const { inner, storage } = slowStorage(time, 8000, prev.storage.dump()[KEY]);
     const h = harness({ storage: storage as ReturnType<typeof memoryStorage>, time, storageReadTimeoutMs: 1000 });
-    void h.tracker.resume();
-    await h.tick(1000); // timed out
+    let resumed: unknown = "pending";
+    void h.tracker.resume().then((r) => (resumed = r));
+    await h.tick(1000); // past the bound: resume() is still waiting
     const fresh = h.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
     fresh.enterStep("welcome");
+    await h.tick(2000); // persistTimeoutMs: the send does not wait for the read either
+    expect(h.sink.last!.run_id).toBe(fresh.runId);
     await h.tick(10_000); // the late read lands; the queued writes follow it
+    expect(resumed).toBeNull(); // a run was started this session
     await h.tracker.idle();
     h.kill();
 
     const next = harness({ storage: inner, time: new ManualTime(time.clock.now() + 60_000) });
-    const resumed = await next.tracker.resume();
-    expect(resumed?.runId).toBe(fresh.runId);
-    expect(resumed?.runId).not.toBe(old.runId);
+    const again = await next.tracker.resume();
+    expect(again?.runId).toBe(fresh.runId);
+    expect(again?.runId).not.toBe(old.runId);
   });
 });
 

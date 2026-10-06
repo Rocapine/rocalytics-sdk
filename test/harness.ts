@@ -2,8 +2,8 @@
 // checked against the schema, the section 4 rules and the 256 KiB limit when
 // the test ends (see `checkAllConformant`), so no test can pass while the
 // tracker emits something the ingest would reject.
-import { afterEach } from "vitest";
-import { memoryStorage, type KeyValueStorage } from "../src/core";
+import { afterEach, vi } from "vitest";
+import { memoryStorage, type KeyValueStorage, type Sink } from "../src/core";
 import {
   createOnboardingRunTracker,
   type Diagnostic,
@@ -37,6 +37,9 @@ export const MANIFEST = {
 
 export const IDENTITY = { key: "main", version: "3" };
 
+/** Every harness sink's destination, unless a test sets another: what stored state written by a harness tracker is stamped with. */
+export const DESTINATION = "memory://test-collector";
+
 const sinks: { sink: MemorySink<OnboardingRunSnapshot>; full: boolean }[] = [];
 
 /** Checks every body every harness sink received during the test. */
@@ -67,28 +70,51 @@ export interface Harness {
 
 let uuidCounter = 0;
 
+/**
+ * The tracker factory of a new app process: a fresh copy of the module, so a
+ * tracker it creates finds only what is in storage, never what a disposed
+ * tracker of this process handed over in memory. Pass it as `create`.
+ */
+export async function freshProcess(): Promise<typeof createOnboardingRunTracker> {
+  vi.resetModules();
+  return (await import("../src/onboarding")).createOnboardingRunTracker;
+}
+
 export function harness(
-  overrides: Partial<TrackerConfig> & { storage?: KeyValueStorage & { dump(): Record<string, string> }; time?: ManualTime } = {},
+  overrides: Partial<TrackerConfig> & {
+    storage?: KeyValueStorage & { dump(): Record<string, string> };
+    time?: ManualTime;
+    create?: typeof createOnboardingRunTracker;
+    /** The sink's destination. Default `memory://test-collector`, the same for every harness; null for none. */
+    destination?: string | null;
+    /** The exact sink object the tracker gets, instead of the harness's own (whose `sink` then receives nothing). */
+    sinkObject?: Sink<OnboardingRunSnapshot>;
+  } = {},
   check: { full: boolean } = { full: true },
 ): Harness {
-  const time = overrides.time ?? new ManualTime();
+  const { create = createOnboardingRunTracker, destination = DESTINATION, sinkObject, ...config } = overrides;
+  const time = config.time ?? new ManualTime();
   const sink = new MemorySink<OnboardingRunSnapshot>();
   sinks.push({ sink, full: check.full });
-  const storage = overrides.storage ?? memoryStorage();
-  const noStorage = "storage" in overrides && overrides.storage === undefined;
+  const storage = config.storage ?? memoryStorage();
+  const noStorage = "storage" in config && config.storage === undefined;
   const diagnostics: Diagnostic[] = [];
   let alive = true;
   const never = () => new Promise<never>(() => {});
   // What the tracker sees: the real sink and storage, until the process is killed.
   // A fresh adapter object per harness, so two harnesses over one store behave like
-  // two app launches (or a host passing a new adapter on each configure()).
-  const processSink = { send: (b: OnboardingRunSnapshot) => (alive ? sink.send(b) : never()) };
+  // two app launches (or a host passing a new adapter on each configure()). The
+  // sink is a fresh object too, with the same destination unless a test sets one.
+  const processSink = {
+    send: (b: OnboardingRunSnapshot) => (alive ? sink.send(b) : never()),
+    ...(destination === null ? {} : { destination }),
+  };
   const processStorage: KeyValueStorage = {
     getItem: (k) => (alive ? storage.getItem(k) : never()),
     setItem: (k, v) => (alive ? storage.setItem(k, v) : never()),
     removeItem: (k) => (alive ? storage.removeItem(k) : never()),
   };
-  const tracker = createOnboardingRunTracker({
+  const tracker = create({
     context: CONTEXT,
     clock: time.clock,
     timers: time.timers,
@@ -96,8 +122,8 @@ export function harness(
     debounceMs: 0,
     retry: { initialDelayMs: 1000, factor: 2, maxDelayMs: 8000 },
     onDiagnostic: (d) => diagnostics.push(d),
-    ...overrides,
-    sink: processSink,
+    ...config,
+    sink: sinkObject ?? processSink,
     storage: noStorage ? undefined : processStorage,
   });
   return {
