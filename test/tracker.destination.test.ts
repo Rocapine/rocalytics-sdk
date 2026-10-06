@@ -241,3 +241,77 @@ describe("diagnostics for stored state", () => {
     expect(codes).not.toContain("destination-changed");
   });
 });
+
+describe("the destination-changed diagnostic on a reconfigure", () => {
+  const reports = (h: { diagnostics: { code: string }[] }) => h.diagnostics.filter((d) => d.code === "destination-changed").length;
+
+  it.each([
+    ["the old tracker recorded nothing", false],
+    ["its completion was delivered, so storage is empty", true],
+  ])("nothing is left (%s): no diagnostic", async (_, completed) => {
+    const time = new ManualTime();
+    const storage = memoryStorage();
+    const a = harness({ storage, time, destination: STAGING });
+    if (completed) {
+      const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+      run.enterStep("welcome");
+      run.complete();
+    }
+    await a.tick(5000);
+    await a.tracker.idle();
+    a.tracker.dispose();
+    const b = harness({ storage, time, destination: PRODUCTION });
+    await b.tick(60_000);
+    expect(reports(b)).toBe(0);
+  });
+
+  it("a run in progress: reported once, at once", () => {
+    const time = new ManualTime();
+    const a = harness({ storage: undefined, time, destination: STAGING });
+    a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST }).enterStep("welcome");
+    a.tracker.dispose();
+    const b = harness({ storage: undefined, time, destination: PRODUCTION });
+    expect(reports(b)).toBe(1);
+  });
+
+  it.each([
+    ["transient", 1],
+    ["accepted", 0],
+  ] as const)("a completion whose last attempt answers %s after 2 s: reported %i time(s), once that answer is known", async (answer, expected) => {
+    const time = new ManualTime();
+    const a = harness({ storage: undefined, time, destination: STAGING });
+    a.sink.respond = (body) =>
+      body.status === "completed" ? new Promise((r) => time.timers.setTimeout(() => r({ outcome: answer }), 2000)) : { outcome: "accepted" };
+    const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    await a.tick(1000);
+    run.complete(); // in flight when A is disposed
+    a.tracker.dispose();
+    const b = harness({ storage: undefined, time, destination: PRODUCTION });
+    await b.tick(1000);
+    expect(reports(b)).toBe(0); // not known yet
+    await b.tick(60_000);
+    expect(reports(b)).toBe(expected);
+  });
+
+  it("only stored state is left (an idle old tracker over a previous launch's state): reported once, by the read", async () => {
+    const time = new ManualTime();
+    const storage = memoryStorage();
+    const earlier = harness({ storage, time, destination: STAGING });
+    earlier.sink.respond = () => ({ outcome: "transient" });
+    const run = earlier.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("welcome");
+    run.complete();
+    await earlier.tick(1000);
+    await earlier.tracker.idle();
+    earlier.kill(); // a previous launch, stamped STAGING
+
+    const create = await freshProcess(); // the next launch, where A is configured, then replaced by B
+    const a = harness({ storage, time, destination: STAGING, create });
+    a.tracker.dispose(); // at once: it has read nothing, and leaves nothing in memory
+    const b = harness({ storage, time, destination: PRODUCTION, create });
+    expect(reports(b)).toBe(0);
+    await b.tick(60_000);
+    expect(reports(b)).toBe(1);
+  });
+});

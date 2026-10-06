@@ -244,11 +244,18 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
   const destinationChanged =
     !!offered &&
     (offered.destination !== undefined && destination !== undefined ? offered.destination !== destination : offered.sink !== config.sink);
-  if (destinationChanged) {
-    report({
-      code: "destination-changed",
-      message: `the tracker this one replaces on storageKey "${storageKey}" sent to another destination: nothing it left is sent here, and the stored state is discarded`,
-    });
+  // Reported once, and only when something is discarded: a switch that leaves nothing is not a loss.
+  let discardReported = false;
+  const reportDiscarded = (message: string) => {
+    if (discardReported) return;
+    discardReported = true;
+    report({ code: "destination-changed", message });
+  };
+  const replacedElsewhere = `the tracker this one replaces on storageKey "${storageKey}" sent to another destination: what it left is discarded, not sent here`;
+  if (offered && destinationChanged) {
+    if (offered.run?.current) reportDiscarded(replacedElsewhere); // a run in progress
+    // Its unsent snapshots are known once its last attempts are answered: those delivered are not lost.
+    void offered.left.then((left) => left.unsent.size > 0 && reportDiscarded(replacedElsewhere)).catch(() => undefined);
   }
   const handed = destinationChanged ? undefined : offered;
   const predecessor = handed?.left;
@@ -324,12 +331,11 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
           if (destinationChanged || (raw as { destination?: unknown }).destination !== destination) {
             if (!current && stored.length === 0) return;
             rewrite = true;
-            // After a reconfigure to another destination, that was reported already.
-            if (destinationChanged) return;
-            return report({
-              code: "destination-changed",
-              message: `the stored state was written for another destination than this sink's: discarded, nothing of it is sent`,
-            });
+            return reportDiscarded(
+              destinationChanged
+                ? replacedElsewhere
+                : "the stored state was written for another destination than this sink's: discarded, nothing of it is sent",
+            );
           }
           // Merged even after dispose(), so a write still queued keeps them; but
           // sent only before it, and only once the predecessor's last attempts

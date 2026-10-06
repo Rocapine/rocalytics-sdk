@@ -37,7 +37,7 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
 
 - `@rocapine/studio-sdk/onboarding`: snapshots recorded for one destination are never sent to another.
   - A reconfigure hands the old tracker's unsent snapshots and run over only when the new sink has the same `destination`, or, when either sink has none, is the same object.
-  - Otherwise the new tracker takes nothing, in memory or from storage. It discards the stored state, and reports `destination-changed`.
+  - Otherwise the new tracker takes nothing, in memory or from storage, and discards the stored state. It reports `destination-changed` once, only when that discards something (a run in progress, a snapshot the old tracker's last attempts did not deliver, or stored state).
   - Stored state is now stamped with the writing sink's destination. A launch discards stored state written for another destination instead of sending it; two sinks without a destination count as one there.
   - On a reconfigure, a sink with another `destination`, or a custom sink without one that is not the same object, now gets nothing of what the old tracker left unsent. The stock sinks always have a destination, so rebuilding them with the same URL keeps the handoff. A custom sink built anew on each `configure()` should set a `destination`, or be reused.
 - `@rocapine/studio-sdk/onboarding`: a stored unsent snapshot that a disposed tracker first reads after `dispose()` no longer gets a last attempt from it. It stays in storage, and the next tracker on the same `storageKey` sends it, so the two never send it at once.

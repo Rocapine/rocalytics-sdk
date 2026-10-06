@@ -208,7 +208,7 @@ A sink that throws, or returns anything else, counts as transient.
 **`destination`** says where the sink delivers. Snapshots recorded for one destination are never sent to another:
 
 - A reconfigure hands the old tracker's unsent snapshots and run to the new tracker only if both sinks have the same `destination`, or, when either has none, are the same object.
-- Otherwise the new tracker takes nothing, discards the stored state it reads, and reports `destination-changed`.
+- Otherwise the new tracker takes nothing and discards the stored state it reads. It reports `destination-changed` once, and only if that discards something: a run in progress, a snapshot the old tracker's last attempts did not deliver, or stored state. Switching when nothing is left reports nothing.
 - Stored state is stamped with the destination of the tracker that wrote it, and a later launch discards, unsent, what was written for another destination. Two sinks without a destination count as the same one there, since nothing tells them apart.
 
 `createHttpSink` sets `destination` to its `url`, and `createRocalyticsOnboardingSink` to the client's onboarding endpoint, so a sink built anew on each `configure()` with the same URL keeps the same destination. When a `fetch` is injected, both mark it, as `<url> (custom fetch)`: that `fetch` may never reach the URL, so a mock on the production URL never counts as the production sink, while two mocks on the same URL still match.
@@ -317,6 +317,8 @@ export function setUpOnboardingTracking(storage: KeyValueStorage, context: () =>
 | `trackCustomEvent(name, properties?, dedupSuffix?)` | An event with any name, passed on by the API to drive automations rather than stored as an analytics event. Deduplicated on `${rocaId}-${name}`, plus `-${dedupSuffix}` when given. |
 | `trackOnboarding(stepId, answers?, metadata?)` | The pre-v1 onboarding calls, unchanged. Resends every step seen so far. |
 | `getDemandScore(signals?)` | The server's 1 to 100 demand score for this install. Rejects when the client is inert. |
+| `sendOnboardingRun(snapshot)` | Delivers one onboarding run snapshot as the pre-v1 onboarding payload. For an accepted completed snapshot it then sends `onboarding_completed` once per run, deduplicated on `${rocaId}-onboarding_completed-${run_id}`; if that event fails, the send is transient, so a retry sends it. Never throws. It is the send of `createRocalyticsOnboardingSink`. |
+| `onboardingRunDestination` | Where `sendOnboardingRun` delivers: the `/onboarding-response` endpoint of `baseUrl`, marked ` (custom fetch)` when a `fetch` is passed, so that it never counts as the real endpoint. The `destination` of `createRocalyticsOnboardingSink`. |
 
 A method whose request gets a non-2xx answer rejects with `[ROCALYTICS] <endpoint> failed: <status>`, as the copied client did. The client never logs a request, its response or purchase properties. The only thing it reports is why it went inert or why start-up failed, through `onDiagnostic`, which defaults to `console.warn`. The request builders (`buildTrackRequest`, `buildIdentifyRequest`, `buildOnboardingResponseRequest`, `buildDemandScoreRequest`) and `getEventId` are exported as pure functions.
 
