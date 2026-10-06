@@ -171,7 +171,7 @@ The tracker assumes the app restores the screen of the last recorded entry. **A 
 
 If the app does not restore the position, call `start()` instead.
 
-`resume()` waits for the stored state to be read, however long the storage takes; a read slower than `storageReadTimeoutMs` is reported, not abandoned. **A storage that never answers the read means `resume()` never resolves.** An app that cannot wait should race it with its own timeout, and call `start()` if the timeout wins: `start()` never waits for the read, and the run it starts is sent and stored as usual once the read lands.
+`resume()` waits for the stored state to be read, however long the storage takes; a read slower than `storageReadTimeoutMs` is reported, not abandoned. **A storage that never answers the read means `resume()` never resolves.** An app that cannot wait should race it with its own timeout, and call `start()` if the timeout wins: `start()` never waits for the read. The run it starts is sent as usual, and stored once the read lands.
 
 ## Delivery
 
@@ -211,6 +211,7 @@ When recording one more entry, answer or property change would cross a limit, th
 
 Unlike the limits above, which come from the contract, these are the tracker's own. Each is intended in this release, and a test pins it.
 
+- **A late write from a replaced tracker, then `resume()`.** A tracker created on a `storageKey` whose previous tracker was disposed (as `configure()` does) waits for that tracker's queued writes before it reads, but only up to the old tracker's `idle()` bound: about twice `storageReadTimeoutMs`. If a write takes longer and the new tracker calls `resume()` rather than `start()`, it resumes the old run from the older state it read, even if that run has since been completed, and the resumed run's first send can reuse the seq of the old tracker's last send with a different body. Calling `start()` instead is not affected: the old run's unsent snapshots are handed over and delivered once, and the new tracker writes its state again when the late write lands.
 - **An app killed without working storage.** A snapshot the sink has not taken survives the end of the process only in storage. When the app is killed without storage, with persistence off for the session (storage that cannot be read, or a stored format this version does not know), or with a write that never finishes, such a snapshot is lost, a completion included. The same holds after a `dispose()` when no tracker is created on its `storageKey` before the app is killed. A reconfigure loses nothing: `dispose()` hands what is unsent to the next tracker in memory (see `dispose()` above).
 - **The resumed screen.** `resume()` records the restored screen as a new entry for the last recorded step. There is no way to name a different screen. A truncated run records no entry at all, and its `currentStepKey` is the last step recorded before the limit.
 

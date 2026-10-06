@@ -21,7 +21,7 @@ describe("F1: a null Studio deployment id", () => {
   });
 
   // Only a Studio id that is a safe non-negative integer is converted (known-limits.test.ts, item 5).
-  it("a non-string identity is an invalid start, never coerced to a string", async () => {
+  it("a non-string identity is an invalid start, and only a Studio id that is a safe non-negative integer is converted", async () => {
     const bad = [
       { studio: { onboardingId: "abc", deploymentId: 412.5 } },
       { onboarding: { key: "main", version: null } },

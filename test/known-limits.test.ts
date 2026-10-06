@@ -23,6 +23,7 @@ describe("the README's known limits of the tracker", () => {
   });
 
   it.each([
+    "A late write from a replaced tracker, then `resume()`.",
     "An app killed without working storage.",
     "The resumed screen.",
   ])("names the limit %s", (label) => {
@@ -118,6 +119,37 @@ describe("item 1 (fixed): a replaced tracker's write that lands after the new tr
       expect(delivered).toBe(1);
       expect(completions(b)).toBe(lastAttempt === "accepted" ? 0 : 1); // the new tracker delivers it this session
     });
+  });
+});
+
+describe("item 1, still a limit: the new tracker calls resume() before a late write of the replaced tracker lands", () => {
+  // The new tracker reads the state the replaced one wrote before the slow
+  // write: its run still in progress. resume() returns that run, though it was
+  // completed, and its restore send reuses the completion's seq.
+  it("resumes the replaced tracker's completed run from the older state it read", async () => {
+    const time = new ManualTime();
+    const inner = memoryStorage();
+    const state = { slow: false };
+    const storageA = Object.assign({}, inner, {
+      setItem: (k: string, v: string) =>
+        state.slow ? new Promise<void>((r) => time.timers.setTimeout(() => r(inner.setItem(k, v)), 30_000)) : inner.setItem(k, v),
+    });
+    const a = harness({ storage: storageA, time, storageReadTimeoutMs: 1000 });
+    const old = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    old.enterStep("welcome");
+    await a.tick(1000);
+    await a.tracker.idle();
+    state.slow = true;
+    old.complete(); // seq 2, completed; its write lands 30 s later
+    a.tracker.dispose();
+
+    const b = harness({ storage: inner, time, storageReadTimeoutMs: 1000 });
+    let resumed: unknown = "pending";
+    void b.tracker.resume().then((r) => (resumed = r));
+    await b.tick(60_000);
+    expect((resumed as { runId: string } | null)?.runId).toBe(old.runId);
+    expect(a.sink.last).toMatchObject({ seq: 2, status: "completed" });
+    expect(b.sink.received.filter((s) => s.run_id === old.runId).map((s) => [s.seq, s.status])).toEqual([[2, "in_progress"]]);
   });
 });
 
