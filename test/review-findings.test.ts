@@ -5,7 +5,7 @@ import { memoryStorage, type KeyValueStorage } from "../src/core";
 import type { OnboardingRunSnapshot, StartOptions } from "../src/onboarding";
 import { onboardingRun } from "../src/onboarding";
 import { ManualTime, MemorySink, flushMicrotasks } from "./fakes";
-import { CONTEXT, IDENTITY, MANIFEST, freshProcess, harness } from "./harness";
+import { CONTEXT, DESTINATION, IDENTITY, MANIFEST, freshProcess, harness } from "./harness";
 
 const KEY = "studio-sdk:onboarding-run";
 
@@ -93,13 +93,13 @@ describe("F2: malformed stored state", () => {
   };
 
   const blobs: [string, string][] = [
-    ["a null outbox item", JSON.stringify({ format: 1, current: null, outboxes: { x: null } })],
-    ["an outbox item with a string seq", JSON.stringify({ format: 1, current: null, outboxes: { x: { seq: "1", body: {} } } })],
-    ["an outbox item with no body", JSON.stringify({ format: 1, current: null, outboxes: { x: { seq: 1 } } })],
-    ["outboxes as an array", JSON.stringify({ format: 1, current: null, outboxes: [1, 2] })],
-    ["a dirty current with no steps", JSON.stringify({ format: 1, current: { status: "in_progress", dirty: true }, outboxes: {} })],
-    ["a current that is a string", JSON.stringify({ format: 1, current: "nope", outboxes: {} })],
-    ["a current whose steps are not a list", JSON.stringify({ format: 1, current: { status: "in_progress", dirty: true, steps: "x", lastSeq: 1, runId: "r" }, outboxes: {} })],
+    ["a null outbox item", JSON.stringify({ format: 1, destination: DESTINATION, current: null, outboxes: { x: null } })],
+    ["an outbox item with a string seq", JSON.stringify({ format: 1, destination: DESTINATION, current: null, outboxes: { x: { seq: "1", body: {} } } })],
+    ["an outbox item with no body", JSON.stringify({ format: 1, destination: DESTINATION, current: null, outboxes: { x: { seq: 1 } } })],
+    ["outboxes as an array", JSON.stringify({ format: 1, destination: DESTINATION, current: null, outboxes: [1, 2] })],
+    ["a dirty current with no steps", JSON.stringify({ format: 1, destination: DESTINATION, current: { status: "in_progress", dirty: true }, outboxes: {} })],
+    ["a current that is a string", JSON.stringify({ format: 1, destination: DESTINATION, current: "nope", outboxes: {} })],
+    ["a current whose steps are not a list", JSON.stringify({ format: 1, destination: DESTINATION, current: { status: "in_progress", dirty: true, steps: "x", lastSeq: 1, runId: "r" }, outboxes: {} })],
     ["a number", "42"],
     ["a list", "[]"],
     ["not JSON", "{not json"],
@@ -137,7 +137,7 @@ describe("F2: malformed stored state", () => {
 
   it("a valid outbox next to an invalid one is still delivered", async () => {
     const storage = memoryStorage();
-    storage.setItem(KEY, JSON.stringify({ format: 1, current: null, outboxes: { bad: null, [VALID_OUTBOX_BODY.run_id]: { seq: 3, body: VALID_OUTBOX_BODY } } }));
+    storage.setItem(KEY, JSON.stringify({ format: 1, destination: DESTINATION, current: null, outboxes: { bad: null, [VALID_OUTBOX_BODY.run_id]: { seq: 3, body: VALID_OUTBOX_BODY } } }));
     const h = harness({ storage });
     await h.tick();
     expect(h.sink.received).toEqual([VALID_OUTBOX_BODY]);
@@ -445,7 +445,7 @@ describe("B2: a failed storage read never deletes or overwrites what it did not 
     steps: [{ step_key: "welcome", entered_at: "2026-01-10T07:00:00.000Z", exited_at: "2026-01-10T07:00:10.000Z", answers: [] }],
   });
   const RUN = "00000000-0000-4000-8000-0000000000cc";
-  const blob = JSON.stringify({ format: 1, current: null, outboxes: { [RUN]: { seq: 2, body: completedBody(RUN) } } });
+  const blob = JSON.stringify({ format: 1, destination: DESTINATION, current: null, outboxes: { [RUN]: { seq: 2, body: completedBody(RUN) } } });
 
   function flakyStorage(failures: number) {
     const inner = memoryStorage();
@@ -564,14 +564,14 @@ describe("R3 blocker: a reconfigure with a fresh storage adapter over the same s
         const time = new ManualTime();
         const inner = memoryStorage();
         const base = { context: CONTEXT, clock: time.clock, timers: time.timers, debounceMs: 0, onDiagnostic: () => {} };
-        const sinkA = new MemorySink<OnboardingRunSnapshot>();
+        const sinkA = Object.assign(new MemorySink<OnboardingRunSnapshot>(), { destination: "https://collector.example.com" }); // one destination, two sink objects
         if (firstSink === "transient") sinkA.respond = () => ({ outcome: "transient" });
         onboardingRun.configure({ ...base, sink: sinkA, storage: adapter(inner, time, delayMs) });
         const run = onboardingRun.start({ onboarding: IDENTITY, manifest: MANIFEST });
         run.enterStep("welcome");
         await time.advance(1000);
         run.complete();
-        const sinkB = new MemorySink<OnboardingRunSnapshot>();
+        const sinkB = Object.assign(new MemorySink<OnboardingRunSnapshot>(), { destination: "https://collector.example.com" }); // one destination, two sink objects
         onboardingRun.configure({ ...base, sink: sinkB, storage: adapter(inner, time, delayMs) });
 
         let resumed: unknown = "pending";

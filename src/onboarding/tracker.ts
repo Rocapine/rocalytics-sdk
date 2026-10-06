@@ -127,10 +127,12 @@ export interface OnboardingRunTracker {
    * gets one last attempt (no retry timers). One the sink does not take is
    * handed, in memory, to the next tracker created on the same `storageKey`
    * (as `configure()` does), which sends it with its own sink and retries,
-   * with or without storage. That tracker keeps this one's unsent snapshots
-   * in its writes from the start, sends none of them until these last
-   * attempts are answered, and drops any they delivered. A tracker disposed
-   * without a run of its own passes on what it was handed. With working storage the snapshot also stays stored for the next launch;
+   * with or without storage, provided its sink has the same `destination`
+   * (or, without one, is the same object). That tracker keeps this one's
+   * unsent snapshots in its writes from the start, sends none of them until
+   * these last attempts are answered, and drops any they delivered. A tracker
+   * disposed without a run of its own passes on what it was handed. With
+   * working storage the snapshot also stays stored for the next launch;
    * without it, a snapshot is lost if the app is killed before a next tracker
    * is created. Safe to call twice.
    */
@@ -179,9 +181,17 @@ interface Handoff {
 //   A tracker disposed without a run passes on what it was handed;
 // - how many live trackers use the key: two at once overwrite each other.
 const lastDrainOnKey = new Map<string, { drain: Promise<void>; landed: Promise<void>; writes: Promise<void>[] }>();
+//   Only a tracker whose sink has the same destination takes it: one that
+//   sends elsewhere takes nothing, and discards the stored state it reads;
 const handoffOnKey = new Map<
   string,
-  { run?: { current: RunState | null }; outboxes: Map<string, Outbound<OnboardingRunSnapshot>>; left: Promise<Handoff> }
+  {
+    sink: Sink<OnboardingRunSnapshot>;
+    destination: string | undefined;
+    run?: { current: RunState | null };
+    outboxes: Map<string, Outbound<OnboardingRunSnapshot>>;
+    left: Promise<Handoff>;
+  }
 >();
 const liveOnKey = new Map<string, number>();
 
@@ -225,9 +235,22 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
   const staging = new Set<Promise<void>>();
   // Writes queued and not yet done.
   const writing = new Set<Promise<void>>();
+  // Where this tracker's snapshots go; stamped on what it stores.
+  const destination = typeof config.sink?.destination === "string" ? config.sink.destination : undefined;
   // Taken once: a later tracker on this key gets this one's handoff, not the predecessor's.
-  const handed = handoffOnKey.get(storageKey);
+  const offered = handoffOnKey.get(storageKey);
   handoffOnKey.delete(storageKey);
+  // A predecessor that sent elsewhere: nothing it left is taken, in memory or from storage.
+  const destinationChanged =
+    !!offered &&
+    (offered.destination !== undefined && destination !== undefined ? offered.destination !== destination : offered.sink !== config.sink);
+  if (destinationChanged) {
+    report({
+      code: "destination-changed",
+      message: `the tracker this one replaces on storageKey "${storageKey}" sent to another destination: nothing it left is sent here, and the stored state is discarded`,
+    });
+  }
+  const handed = destinationChanged ? undefined : offered;
   const predecessor = handed?.left;
   // The predecessor's run: when set, it replaces the stored one, which a late write may not have updated.
   const handedRun = handed?.run;
@@ -260,7 +283,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
   const compose = (): Persisted | null => {
     const current = live && live.state.status === "in_progress" ? live.state : persistedCurrent;
     if (!current && outboxes.size === 0) return null;
-    return { format: 1, current, outboxes: Object.fromEntries(outboxes) };
+    return { format: 1, ...(destination === undefined ? {} : { destination }), current, outboxes: Object.fromEntries(outboxes) };
   };
 
   // Persisted outboxes are merged in before anything is written, so a write
@@ -290,6 +313,14 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
             return report({
               code: "storage",
               message: `the stored state has format ${format}, which this version does not know: it is left untouched, and this session runs without persistence`,
+            });
+          }
+          // Written for another destination: never sent here, so discarded.
+          if (destinationChanged || (raw as { destination?: unknown }).destination !== destination) {
+            rewrite = true;
+            return report({
+              code: "destination-changed",
+              message: `the stored state was written for another destination than this sink's: discarded, nothing of it is sent`,
             });
           }
           const { current, outboxes: stored, problems } = parsePersisted(raw);
@@ -362,7 +393,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
     void priorWrites.drain.then(() => (drained = true));
     for (const write of priorWrites.writes) {
       void write.then(() => {
-        if (drained && (startedThisSession || handedRun)) persist();
+        if (drained && (startedThisSession || handedRun || destinationChanged)) persist();
       });
     }
   }
@@ -765,6 +796,8 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
       disposed = true;
       for (const d of deliveries.values()) d.close();
       handoffOnKey.set(storageKey, {
+        sink: config.sink,
+        destination,
         run: startedThisSession ? { current: live && live.state.status === "in_progress" ? live.state : null } : handedRun,
         outboxes: new Map(outboxes),
         left: leftUnsent(),

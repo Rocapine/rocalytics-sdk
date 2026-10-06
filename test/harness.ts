@@ -3,7 +3,7 @@
 // the test ends (see `checkAllConformant`), so no test can pass while the
 // tracker emits something the ingest would reject.
 import { afterEach, vi } from "vitest";
-import { memoryStorage, type KeyValueStorage } from "../src/core";
+import { memoryStorage, type KeyValueStorage, type Sink } from "../src/core";
 import {
   createOnboardingRunTracker,
   type Diagnostic,
@@ -36,6 +36,9 @@ export const MANIFEST = {
 };
 
 export const IDENTITY = { key: "main", version: "3" };
+
+/** Every harness sink's destination, unless a test sets another: what stored state written by a harness tracker is stamped with. */
+export const DESTINATION = "memory://test-collector";
 
 const sinks: { sink: MemorySink<OnboardingRunSnapshot>; full: boolean }[] = [];
 
@@ -82,10 +85,14 @@ export function harness(
     storage?: KeyValueStorage & { dump(): Record<string, string> };
     time?: ManualTime;
     create?: typeof createOnboardingRunTracker;
+    /** The sink's destination. Default `memory://test-collector`, the same for every harness; null for none. */
+    destination?: string | null;
+    /** The exact sink object the tracker gets, instead of the harness's own (whose `sink` then receives nothing). */
+    sinkObject?: Sink<OnboardingRunSnapshot>;
   } = {},
   check: { full: boolean } = { full: true },
 ): Harness {
-  const { create = createOnboardingRunTracker, ...config } = overrides;
+  const { create = createOnboardingRunTracker, destination = DESTINATION, sinkObject, ...config } = overrides;
   const time = config.time ?? new ManualTime();
   const sink = new MemorySink<OnboardingRunSnapshot>();
   sinks.push({ sink, full: check.full });
@@ -96,8 +103,12 @@ export function harness(
   const never = () => new Promise<never>(() => {});
   // What the tracker sees: the real sink and storage, until the process is killed.
   // A fresh adapter object per harness, so two harnesses over one store behave like
-  // two app launches (or a host passing a new adapter on each configure()).
-  const processSink = { send: (b: OnboardingRunSnapshot) => (alive ? sink.send(b) : never()) };
+  // two app launches (or a host passing a new adapter on each configure()). The
+  // sink is a fresh object too, with the same destination unless a test sets one.
+  const processSink = {
+    send: (b: OnboardingRunSnapshot) => (alive ? sink.send(b) : never()),
+    ...(destination === null ? {} : { destination }),
+  };
   const processStorage: KeyValueStorage = {
     getItem: (k) => (alive ? storage.getItem(k) : never()),
     setItem: (k, v) => (alive ? storage.setItem(k, v) : never()),
@@ -112,7 +123,7 @@ export function harness(
     retry: { initialDelayMs: 1000, factor: 2, maxDelayMs: 8000 },
     onDiagnostic: (d) => diagnostics.push(d),
     ...config,
-    sink: processSink,
+    sink: sinkObject ?? processSink,
     storage: noStorage ? undefined : processStorage,
   });
   return {

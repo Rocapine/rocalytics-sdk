@@ -113,7 +113,7 @@ That run produces one payload per send. The completed one lists `welcome`, `goal
 
 | Option | Default | |
 |---|---|---|
-| `sink` | required | Where snapshots go. `createHttpSink({ url, headers?, timeoutMs? })`, or your own `Sink`. |
+| `sink` | required | Where snapshots go. `createHttpSink({ url, headers?, timeoutMs? })`, or your own `Sink`. Its `destination` decides what a reconfigure hands over and what stored state is sent (see [A custom sink](#a-custom-sink)). |
 | `context` | required | `{ appVersion, build, platform, osVersion, locale, timezone }`, or a function returning it. Read once per run, at start. There is no country field: the server derives it. |
 | `storage` | none | A key-value store shaped like AsyncStorage or `localStorage`. Without it, nothing survives a restart. If it cannot be read (after one retry), or holds a format this version does not know, it is left untouched and the session runs without persistence. |
 | `storageKey` | `studio-sdk:onboarding-run` | One restorable run per key. |
@@ -132,7 +132,7 @@ That run produces one payload per send. The completed one lists `welcome`, `goal
 - writes already queued still land;
 - each unsent snapshot gets one last attempt.
 
-A snapshot the sink does not take is then **handed, in memory, to the next tracker created on the same `storageKey`**, as `configure()` does. That tracker sends it with its own sink and retries, with or without storage. It keeps them in its own writes from the start, but sends none of the old tracker's snapshots, handed over or read from storage, until the old tracker's last attempts are answered (each within `attemptTimeoutMs`), and it drops any snapshot one of them delivered, so a reconfigure sends each snapshot once and storage never loses one still waiting for its answer. A tracker created and disposed without a run of its own (two `configure()` calls in a row, for example) passes on everything it was handed. The old tracker's run is handed over too, in its newest state: the new tracker's `resume()` returns it, with storage or without, and returns null if the old tracker completed it or started another. So a write of the old tracker's that lands after the new tracker read storage (past the bounded wait) can neither be resumed from an older state nor hide the newer one: the new tracker writes its own state again as each such write lands, once it has a run or was handed one.
+A snapshot the sink does not take is then **handed, in memory, to the next tracker created on the same `storageKey`**, as `configure()` does, when that tracker's sink has the same destination (see [A custom sink](#a-custom-sink)). That tracker sends it with its own sink and retries, with or without storage. It keeps them in its own writes from the start, but sends none of the old tracker's snapshots, handed over or read from storage, until the old tracker's last attempts are answered (each within `attemptTimeoutMs`), and it drops any snapshot one of them delivered, so a reconfigure sends each snapshot once and storage never loses one still waiting for its answer. A tracker created and disposed without a run of its own (two `configure()` calls in a row, for example) passes on everything it was handed. The old tracker's run is handed over too, in its newest state: the new tracker's `resume()` returns it, with storage or without, and returns null if the old tracker completed it or started another. So a write of the old tracker's that lands after the new tracker read storage (past the bounded wait) can neither be resumed from an older state nor hide the newer one: the new tracker writes its own state again as each such write lands, once it has a run or was handed one.
 
 With working storage, an unsent snapshot also stays in storage for the next launch. The next launch may send again a snapshot that the sink took during `dispose()`, with the same `seq` and body, which the ingest ignores. Without working storage, only a tracker created in the same process gets it (see [Known limits of the tracker](#known-limits-of-the-tracker)).
 
@@ -195,6 +195,7 @@ After a reconfigure, `resume()` returns the run the disposed tracker on the same
 import type { Sink, OnboardingRunSnapshot } from "@rocapine/studio-sdk/onboarding";
 
 const sink: Sink<OnboardingRunSnapshot> = {
+  destination: "https://collector.example.com/v1/onboarding-runs", // where it delivers; omit on a test double
   async send(snapshot) {
     // deliver it, then report what the ingest said:
     return { outcome: "accepted" }; // or "ignored", "rejected", "transient"
@@ -203,6 +204,18 @@ const sink: Sink<OnboardingRunSnapshot> = {
 ```
 
 A sink that throws, or returns anything else, counts as transient.
+
+**`destination`** says where the sink delivers. Snapshots recorded for one destination are never sent to another:
+
+- A reconfigure hands the old tracker's unsent snapshots and run to the new tracker only if both sinks have the same `destination`, or, when either has none, are the same object.
+- Otherwise the new tracker takes nothing, discards the stored state it reads, and reports `destination-changed`.
+- Stored state is stamped with the destination of the tracker that wrote it, and a later launch discards, unsent, what was written for another destination. Two sinks without a destination count as the same one there, since nothing tells them apart.
+
+`createHttpSink` sets `destination` to its `url`, and `createRocalyticsOnboardingSink` to the client's onboarding endpoint. Neither sets it when a `fetch` is injected, since that `fetch` may never reach the URL.
+
+A custom sink without a `destination`, built anew on each `configure()`, therefore loses on every reconfigure what the old tracker left unsent. Give it a `destination`, or reuse the sink object.
+
+**Use one `storageKey` per destination.** A test or staging configuration should use a `storageKey` of its own, so that switching destinations discards nothing.
 
 The tracker sends one snapshot of a run at a time, and treats a send with no answer after `attemptTimeoutMs` (30 s) as transient. The stock HTTP sink gives up after 15 s, so its sends never overlap. A custom sink that keeps a request alive past `attemptTimeoutMs` can see a retry start while the first attempt is still running. The two carry the same `seq` and the same body, so the ingest ignores the duplicate.
 

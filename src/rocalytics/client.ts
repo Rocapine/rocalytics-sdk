@@ -9,6 +9,7 @@ import {
   buildIdentifyRequest,
   buildOnboardingResponseRequest,
   buildTrackRequest,
+  ROCALYTICS_API_BASE,
   sendRocalyticsRequest,
   type FetchLike,
   type RequestContext,
@@ -92,6 +93,15 @@ export class RocalyticsClient {
     this.clock = options.clock ?? systemClock;
     this.report = safeDiagnostics(options.onDiagnostic);
     this.ready = this.init().catch(() => undefined);
+  }
+
+  /**
+   * Where `sendOnboardingRun` delivers: the `/onboarding-response` endpoint of
+   * `baseUrl`. Undefined when a `fetch` is passed, which may never reach it.
+   */
+  get onboardingRunDestination(): string | undefined {
+    if (this.options.fetch) return undefined;
+    return `${this.options.baseUrl ?? ROCALYTICS_API_BASE}/functions/v1/onboarding-response`;
   }
 
   /** Sends a named analytics event. */

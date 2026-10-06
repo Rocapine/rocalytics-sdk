@@ -23,10 +23,14 @@ export interface HttpSinkOptions {
  * gateway can answer 401, 404 or 413 without having looked at the payload, so
  * any response without an outcome, and no response at all, is transient.
  * It never throws.
+ *
+ * Its `destination` is `url`, unless a `fetch` is passed: that one may never
+ * reach `url` (a test double), so the sink then has none.
  */
 export function createHttpSink(options: HttpSinkOptions): Sink<unknown> {
   const timeoutMs = options.timeoutMs ?? 15_000;
   return {
+    ...(options.fetch ? {} : { destination: options.url }),
     async send(payload): Promise<SinkResult> {
       const doFetch = options.fetch ?? (globalThis.fetch as unknown as HttpSinkOptions["fetch"]);
       if (!doFetch) return { outcome: "transient", reason: "no fetch available" };

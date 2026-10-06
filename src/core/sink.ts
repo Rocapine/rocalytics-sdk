@@ -21,6 +21,14 @@ export type SinkResult =
  * stock HTTP sink gives up after 15 s).
  */
 export interface Sink<T = unknown> {
+  /**
+   * Where payloads go, such as the collector's URL. Two sinks with the same
+   * destination are interchangeable: a reconfigure hands the old tracker's
+   * unsent snapshots to the new one, and stored ones are sent by either.
+   * Without it, only the same sink object counts as the same destination.
+   * Leave it unset on a sink that does not really deliver there (a test double).
+   */
+  readonly destination?: string;
   send(payload: T): Promise<SinkResult> | SinkResult;
 }
 
