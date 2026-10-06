@@ -5,7 +5,7 @@ import { memoryStorage, type KeyValueStorage } from "../src/core";
 import type { OnboardingRunSnapshot, StartOptions } from "../src/onboarding";
 import { onboardingRun } from "../src/onboarding";
 import { ManualTime, MemorySink, flushMicrotasks } from "./fakes";
-import { CONTEXT, IDENTITY, MANIFEST, harness } from "./harness";
+import { CONTEXT, IDENTITY, MANIFEST, freshProcess, harness } from "./harness";
 
 const KEY = "studio-sdk:onboarding-run";
 
@@ -331,13 +331,13 @@ describe("B1: dispose() never loses a staged snapshot", () => {
     await a.tick(5000);
     expect(a.sink.received.map((s) => [s.seq, s.status])).toEqual([[1, "in_progress"], [2, "completed"]]);
 
-    const b = harness({ storage: a.storage, time: new ManualTime(time.clock.now() + 60_000) });
+    const b = harness({ storage: a.storage, time: new ManualTime(time.clock.now() + 60_000), create: await freshProcess() });
     expect(await b.tracker.resume()).toBeNull();
     await b.tick(60_000);
     expect(b.sink.received.every((s) => s.status === "completed" && s.seq === 2)).toBe(true);
   });
 
-  it("onboardingRun.configure() again right after complete(): the completion is not lost", async () => {
+  it("onboardingRun.configure() again right after complete(): the completion is delivered once", async () => {
     const time = new ManualTime();
     const storage = memoryStorage();
     const sink = new MemorySink<OnboardingRunSnapshot>();
@@ -349,11 +349,9 @@ describe("B1: dispose() never loses a staged snapshot", () => {
     run.complete();
     onboardingRun.configure(cfg); // disposes the first tracker
     await time.advance(5000);
-    // The new tracker may send the same completion again (no write after dispose
-    // records that it was accepted): same seq, same body, which the ingest ignores.
-    const completions = sink.received.filter((s) => s.status === "completed");
-    expect(completions.length).toBeGreaterThanOrEqual(1);
-    expect(new Set(completions.map((s) => JSON.stringify(s))).size).toBe(1);
+    // The stored state still holds the completion (no write after dispose records
+    // that it was accepted), but the new tracker learns that from the old one.
+    expect(sink.received.filter((s) => s.status === "completed")).toHaveLength(1);
     expect(await onboardingRun.resume()).toBeNull();
     await time.advance(60_000);
     expect(sink.received.filter((s) => s.status === "in_progress" && s.seq >= 2)).toEqual([]);
@@ -382,7 +380,8 @@ describe("B1: dispose() never loses a staged snapshot", () => {
 
   it("a completion the sink cannot take at dispose time is kept in storage and delivered by the next launch", async () => {
     const time = new ManualTime();
-    const a = harness({ time });
+    // Its own key: the next launch is another process, so this one's handoff is never taken.
+    const a = harness({ time, storageKey: "test:b1-next-launch" });
     a.sink.respond = () => ({ outcome: "transient" });
     const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
     run.enterStep("welcome");
@@ -393,7 +392,7 @@ describe("B1: dispose() never loses a staged snapshot", () => {
     expect(attempts).toBe(1); // one last attempt, then no retry timers after dispose
     expect(time.pendingTimers).toBe(0);
 
-    const b = harness({ storage: a.storage, time: new ManualTime(time.clock.now() + 60_000) });
+    const b = harness({ storage: a.storage, storageKey: "test:b1-next-launch", time: new ManualTime(time.clock.now() + 60_000), create: await freshProcess() });
     await b.tick(0);
     expect(b.sink.received.map((s) => s.status)).toEqual(["completed"]);
   });
@@ -460,7 +459,7 @@ describe("B2: a failed storage read never deletes or overwrites what it did not 
     };
   }
 
-  it("a read that fails twice: the stored completion is left untouched, even after a whole run this session", async () => {
+  it("a read that fails twice: the stored completion is left untouched, even after a whole run this session, and the next tracker delivers both", async () => {
     const { inner, storage } = flakyStorage(2);
     const a = harness({ storage: storage as typeof inner });
     a.sink.respond = () => ({ outcome: "transient" });
@@ -474,9 +473,13 @@ describe("B2: a failed storage read never deletes or overwrites what it did not 
     expect(a.sink.received.some((s) => s.status === "completed")).toBe(true); // this session's run is still sent
     a.tracker.dispose();
 
+    // The next tracker reads the stored completion, and is handed this session's
+    // own one, which was never stored (persistence was off).
     const b = harness({ storage: inner });
     await b.tick(0);
-    expect(b.sink.received).toEqual([completedBody(RUN)]);
+    expect(b.sink.received).toContainEqual(completedBody(RUN));
+    expect(b.sink.received.filter((s) => s.run_id === run.runId).map((s) => s.status)).toEqual(["completed"]);
+    expect(b.sink.received).toHaveLength(2);
   });
 
   it("a read that fails once is retried, and the stored completion is delivered in the same session", async () => {
@@ -557,7 +560,7 @@ describe("R3 blocker: a reconfigure with a fresh storage adapter over the same s
 
   for (const delayMs of [0, 50]) {
     for (const firstSink of ["transient", "accepting"] as const) {
-      it(`${delayMs} ms storage, ${firstSink} first sink: the completed run is not resumed, and its completion is not lost`, async () => {
+      it(`${delayMs} ms storage, ${firstSink} first sink: the completed run is not resumed, and its completion is delivered once`, async () => {
         const time = new ManualTime();
         const inner = memoryStorage();
         const base = { context: CONTEXT, clock: time.clock, timers: time.timers, debounceMs: 0, onDiagnostic: () => {} };
@@ -578,8 +581,10 @@ describe("R3 blocker: a reconfigure with a fresh storage adapter over the same s
         await time.advance(60_000);
         const all = [...sinkA.received, ...sinkB.received];
         expect(all.filter((s) => s.run_id === run.runId && s.status === "in_progress" && s.seq >= 2)).toEqual([]);
-        const delivered = all.some((s) => s.status === "completed") && (firstSink === "accepting" || sinkB.received.some((s) => s.status === "completed"));
-        expect(delivered).toBe(true);
+        const completions = (sink: MemorySink<OnboardingRunSnapshot>) => sink.received.filter((s) => s.status === "completed").length;
+        // Delivered exactly once: by A's sink when it accepts, otherwise by B's.
+        expect(completions(sinkB)).toBe(firstSink === "accepting" ? 0 : 1);
+        if (firstSink === "accepting") expect(completions(sinkA)).toBe(1);
         onboardingRun.dispose();
       });
     }

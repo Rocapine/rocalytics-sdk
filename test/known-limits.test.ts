@@ -1,15 +1,16 @@
-// The tracker's known limits, as the README's "Known limits of the tracker"
-// section states them (studio-sdk#5, items 1 to 5). Each is intended
-// behaviour, pinned here so a change to it also changes the README. Item 2 is
-// already pinned in review-findings.test.ts ("N-a"), and item 4's untruncated
-// restore in tracker.restore.test.ts.
+// Items 1 to 5 of studio-sdk#5. Items 1, 2 and 5 are fixed, and item 3 on a
+// reconfigure; the tests marked "fixed" pin the fix. What is still a limit (item
+// 4, and item 3 when the app is killed without storage) is stated in the
+// README's "Known limits of the tracker" section and pinned here, so a change
+// to it also changes the README. Item 2 is pinned in review-findings.test.ts
+// ("N-a"), and item 4's untruncated restore in tracker.restore.test.ts.
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { memoryStorage } from "../src/core";
 import type { StartOptions } from "../src/onboarding";
 import { ManualTime } from "./fakes";
-import { IDENTITY, MANIFEST, harness } from "./harness";
+import { IDENTITY, MANIFEST, freshProcess, harness } from "./harness";
 
 const KEY = "studio-sdk:onboarding-run";
 const readme = fs.readFileSync(path.join(__dirname, "..", "README.md"), "utf8");
@@ -22,15 +23,14 @@ describe("the README's known limits of the tracker", () => {
   });
 
   it.each([
-    "A late write from a replaced tracker.",
-    "No working storage at dispose.",
+    "An app killed without working storage.",
     "The resumed screen.",
   ])("names the limit %s", (label) => {
     expect(section).toContain(`**${label}**`);
   });
 });
 
-describe("item 1: a replaced tracker's write that lands after the new tracker's bounded wait", () => {
+describe("item 1 (fixed): a replaced tracker's write that lands after the new tracker's bounded wait", () => {
   /** Tracker A's storage: writes made once `slow` is set land `delayMs` later. */
   function setUp(delayMs: number) {
     const time = new ManualTime();
@@ -47,9 +47,9 @@ describe("item 1: a replaced tracker's write that lands after the new tracker's 
     (JSON.parse(inner.dump()[KEY]) as { current: { runId: string } | null }).current?.runId ?? null;
 
   it.each([
-    [500, "within", true],
-    [30_000, "past", false],
-  ] as const)("a write taking %i ms, %s the bound: the next launch can resume the new tracker's run: %s", async (delayMs, _, resumable) => {
+    [500, "within"],
+    [30_000, "past"],
+  ] as const)("a write taking %i ms, %s the bound: the next launch can resume the new tracker's run", async (delayMs, _) => {
     const { time, inner, state, storageA } = setUp(delayMs);
     const a = harness({ storage: storageA, time, storageReadTimeoutMs: 1000 });
     const old = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
@@ -65,82 +65,143 @@ describe("item 1: a replaced tracker's write that lands after the new tracker's 
     const fresh = b.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
     fresh.enterStep("welcome");
     await b.tick(5000);
-    await b.tick(30_000); // a write past the bound lands now, over B's
+    await b.tick(30_000); // a write past the bound lands now, over B's; B writes its state again
     b.kill();
 
-    expect(storedRunId(inner) === fresh.runId).toBe(resumable);
-    const next = harness({ storage: inner, time: new ManualTime(time.clock.now() + 60_000) });
+    expect(storedRunId(inner)).toBe(fresh.runId);
+    const next = harness({ storage: inner, time: new ManualTime(time.clock.now() + 60_000), create: await freshProcess() });
     const resumed = await next.tracker.resume();
-    expect(resumed?.runId === fresh.runId).toBe(resumable);
+    expect(resumed?.runId).toBe(fresh.runId);
   });
 
-  // The same late write, when the replaced tracker's completion was not taken
-  // at dispose: it lands in storage, but the new tracker never read it, so the
-  // new tracker's next write (any change) composes only its own outboxes and
-  // erases it. Without that next write, the next launch still delivers it.
-  it.each([
-    [true, 0],
-    [false, 1],
-  ] as const)("the new tracker writes again: %s, so the next launch delivers %i completion of the old run", async (writesAgain, delivered) => {
-    const { time, inner, state, storageA } = setUp(30_000);
-    const a = harness({ storage: storageA, time, storageReadTimeoutMs: 1000 });
-    a.sink.respond = () => ({ outcome: "transient" });
-    const old = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
-    old.enterStep("welcome");
-    await a.tick(1000);
-    await a.tracker.idle();
+  // The replaced tracker's completion, whether or not its last attempt at
+  // dispose delivered it, and whether or not its write lands within the bound:
+  // delivered exactly once, counting the next launch. B's sink accepts.
+  describe.each([
+    [0, "a write within the bound"],
+    [30_000, "a write past the bound"],
+  ] as const)("%i ms: %s", (delayMs, _) => {
+    it.each([
+      ["accepted", true],
+      ["accepted", false],
+      ["transient", true],
+      ["transient", false],
+    ] as const)("A's last attempt answered %s, the new tracker writes again: %s: delivered once", async (lastAttempt, writesAgain) => {
+      const { time, inner, state, storageA } = setUp(delayMs);
+      const a = harness({ storage: storageA, time, storageReadTimeoutMs: 1000 });
+      a.sink.respond = (body) => (body.status === "completed" ? { outcome: lastAttempt } : { outcome: "accepted" });
+      const old = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+      old.enterStep("welcome");
+      await a.tick(1000);
+      await a.tracker.idle();
 
-    state.slow = true;
-    old.complete();
-    a.tracker.dispose(); // one last attempt, answered transient, and a write that lands past B's bound
+      state.slow = delayMs > 0;
+      old.complete();
+      a.tracker.dispose(); // one last attempt, and a write that may land past B's bound
 
-    const b = harness({ storage: inner, time, storageReadTimeoutMs: 1000 });
-    const fresh = b.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
-    fresh.enterStep("welcome");
-    await b.tick(5000); // B has read storage, before A's write lands
-    await b.tick(30_000); // A's write lands now, holding the old run's completion
-    if (writesAgain) {
-      fresh.enterStep("goal");
-      await b.tick(1000);
-      await b.tracker.idle();
-    }
-    b.kill();
+      const b = harness({ storage: inner, time, storageReadTimeoutMs: 1000 });
+      const fresh = b.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+      fresh.enterStep("welcome");
+      await b.tick(5000);
+      await b.tick(30_000); // a late write of A's lands now
+      if (writesAgain) {
+        fresh.enterStep("goal");
+        await b.tick(1000);
+        await b.tracker.idle();
+      }
+      b.kill();
 
-    const next = harness({ storage: inner, time: new ManualTime(time.clock.now() + 60_000) });
-    await next.tick(60_000);
-    const completions = next.sink.received.filter((s) => s.run_id === old.runId && s.status === "completed");
-    expect(completions).toHaveLength(delivered);
+      const next = harness({ storage: inner, time: new ManualTime(time.clock.now() + 60_000), create: await freshProcess() });
+      await next.tick(60_000);
+      const completions = (h: typeof a) => h.sink.received.filter((s) => s.run_id === old.runId && s.status === "completed").length;
+      const delivered = (lastAttempt === "accepted" ? completions(a) : 0) + completions(b) + completions(next);
+      expect(delivered).toBe(1);
+      expect(completions(b)).toBe(lastAttempt === "accepted" ? 0 : 1); // the new tracker delivers it this session
+    });
   });
 });
 
-describe("item 3: a completion whose last attempt at dispose() fails", () => {
-  /** Completes a run, disposes with a sink that answers transient, then launches again on `storage`. */
-  async function disposeThenRelaunch(storage: ReturnType<typeof memoryStorage> | undefined) {
+describe("item 1 (fixed): the replaced tracker's last attempt still in flight when the new tracker starts", () => {
+  it.each(["accepted", "transient"] as const)("answered %s after 2 s: the new tracker waits for the answer, and the completion is delivered once", async (answer) => {
+    const time = new ManualTime();
+    const storage = memoryStorage();
+    const a = harness({ storage, time });
+    a.sink.respond = (body) =>
+      body.status === "completed" ? new Promise((r) => time.timers.setTimeout(() => r({ outcome: answer }), 2000)) : { outcome: "accepted" };
+    const old = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    old.enterStep("welcome");
+    await a.tick(1000);
+    old.complete();
+    await a.tick(0); // written, then handed to the sink: the attempt is in flight
+    a.tracker.dispose();
+
+    const b = harness({ storage, time });
+    await b.tick(1000);
+    expect(b.sink.received).toHaveLength(0); // not while A's attempt may still deliver it
+    await b.tick(60_000);
+    const completions = (h: typeof a) => h.sink.received.filter((s) => s.run_id === old.runId && s.status === "completed").length;
+    expect(completions(b)).toBe(answer === "accepted" ? 0 : 1);
+  });
+});
+
+describe("item 3 (fixed on a reconfigure): a completion whose last attempt fails", () => {
+  /** Completes a run with a sink that answers transient, then ends the tracker: disposed (a reconfigure) or killed. */
+  async function completeThenEnd(storage: ReturnType<typeof memoryStorage> | undefined, end: "dispose" | "kill") {
     const time = new ManualTime();
     const a = harness({ storage, time });
     a.sink.respond = () => ({ outcome: "transient" });
     const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
     run.enterStep("welcome");
     run.complete();
-    a.tracker.dispose();
-    await a.tick(60_000);
-    expect(a.sink.received.filter((s) => s.status === "completed")).toHaveLength(1); // the last attempt
-    expect(time.pendingTimers).toBe(0); // and no retry timer is left
-
-    const next = harness({ storage: storage ?? memoryStorage(), time });
-    await next.tick(60_000);
-    return next.sink.received.filter((s) => s.run_id === run.runId && s.status === "completed");
+    if (end === "dispose") {
+      a.tracker.dispose();
+      await a.tick(60_000);
+      expect(a.sink.received.filter((s) => s.status === "completed")).toHaveLength(1); // the last attempt
+      expect(time.pendingTimers).toBe(0); // and no retry timer is left
+    } else {
+      await a.tick(1000);
+      a.kill();
+    }
+    const completions = (h: { sink: typeof a.sink }) => h.sink.received.filter((s) => s.run_id === run.runId && s.status === "completed");
+    return { time, completions };
   }
 
-  it("is kept for the next launch with working storage", async () => {
-    expect(await disposeThenRelaunch(memoryStorage())).toHaveLength(1);
+  it("a reconfigure without storage: the next tracker delivers it", async () => {
+    const { time, completions } = await completeThenEnd(undefined, "dispose");
+    const b = harness({ storage: undefined, time });
+    await b.tick(1000);
+    expect(completions(b)).toHaveLength(1);
   });
 
-  // Without storage the relaunch starts empty, so its 0 cannot fail on its own:
-  // what pins the loss is the helper's checks that the one last attempt was the
-  // only one and that no retry timer is left.
-  it("is lost without storage", async () => {
-    expect(await disposeThenRelaunch(undefined)).toHaveLength(0);
+  it("a reconfigure with working storage: the next tracker delivers it, and the next launch does not send it again", async () => {
+    const storage = memoryStorage();
+    const { time, completions } = await completeThenEnd(storage, "dispose");
+    const b = harness({ storage, time });
+    await b.tick(1000);
+    expect(completions(b)).toHaveLength(1);
+    await b.tracker.idle();
+    b.kill();
+    const next = harness({ storage, time, create: await freshProcess() });
+    await next.tick(60_000);
+    expect(completions(next)).toHaveLength(0);
+  });
+
+  it("the app killed with working storage: the next launch delivers it", async () => {
+    const storage = memoryStorage();
+    const { time, completions } = await completeThenEnd(storage, "kill");
+    const next = harness({ storage, time, create: await freshProcess() });
+    await next.tick(60_000);
+    expect(completions(next)).toHaveLength(1);
+  });
+
+  // Still a limit. Only dispose() hands a snapshot over in memory, so a tracker
+  // created after a kill, even in the same process and on the same key, gets
+  // nothing; the reconfigure case above shows the same set-up delivering it.
+  it("the app killed without storage: it is lost", async () => {
+    const { time, completions } = await completeThenEnd(undefined, "kill");
+    const b = harness({ storage: undefined, time });
+    await b.tick(60_000);
+    expect(completions(b)).toHaveLength(0);
   });
 });
 

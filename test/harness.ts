@@ -2,7 +2,7 @@
 // checked against the schema, the section 4 rules and the 256 KiB limit when
 // the test ends (see `checkAllConformant`), so no test can pass while the
 // tracker emits something the ingest would reject.
-import { afterEach } from "vitest";
+import { afterEach, vi } from "vitest";
 import { memoryStorage, type KeyValueStorage } from "../src/core";
 import {
   createOnboardingRunTracker,
@@ -67,15 +67,30 @@ export interface Harness {
 
 let uuidCounter = 0;
 
+/**
+ * The tracker factory of a new app process: a fresh copy of the module, so a
+ * tracker it creates finds only what is in storage, never what a disposed
+ * tracker of this process handed over in memory. Pass it as `create`.
+ */
+export async function freshProcess(): Promise<typeof createOnboardingRunTracker> {
+  vi.resetModules();
+  return (await import("../src/onboarding")).createOnboardingRunTracker;
+}
+
 export function harness(
-  overrides: Partial<TrackerConfig> & { storage?: KeyValueStorage & { dump(): Record<string, string> }; time?: ManualTime } = {},
+  overrides: Partial<TrackerConfig> & {
+    storage?: KeyValueStorage & { dump(): Record<string, string> };
+    time?: ManualTime;
+    create?: typeof createOnboardingRunTracker;
+  } = {},
   check: { full: boolean } = { full: true },
 ): Harness {
-  const time = overrides.time ?? new ManualTime();
+  const { create = createOnboardingRunTracker, ...config } = overrides;
+  const time = config.time ?? new ManualTime();
   const sink = new MemorySink<OnboardingRunSnapshot>();
   sinks.push({ sink, full: check.full });
-  const storage = overrides.storage ?? memoryStorage();
-  const noStorage = "storage" in overrides && overrides.storage === undefined;
+  const storage = config.storage ?? memoryStorage();
+  const noStorage = "storage" in config && config.storage === undefined;
   const diagnostics: Diagnostic[] = [];
   let alive = true;
   const never = () => new Promise<never>(() => {});
@@ -88,7 +103,7 @@ export function harness(
     setItem: (k, v) => (alive ? storage.setItem(k, v) : never()),
     removeItem: (k) => (alive ? storage.removeItem(k) : never()),
   };
-  const tracker = createOnboardingRunTracker({
+  const tracker = create({
     context: CONTEXT,
     clock: time.clock,
     timers: time.timers,
@@ -96,7 +111,7 @@ export function harness(
     debounceMs: 0,
     retry: { initialDelayMs: 1000, factor: 2, maxDelayMs: 8000 },
     onDiagnostic: (d) => diagnostics.push(d),
-    ...overrides,
+    ...config,
     sink: processSink,
     storage: noStorage ? undefined : processStorage,
   });
