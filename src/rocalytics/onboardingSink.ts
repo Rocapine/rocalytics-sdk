@@ -117,6 +117,5 @@ export function rocalyticsOutcome(status: number, body?: unknown): SinkResult {
  * Its `destination` is the client's `onboardingRunDestination`.
  */
 export function createRocalyticsOnboardingSink(client: RocalyticsClient): Sink<OnboardingRunSnapshot> {
-  const destination = client.onboardingRunDestination;
-  return { ...(destination === undefined ? {} : { destination }), send: (snapshot) => client.sendOnboardingRun(snapshot) };
+  return { destination: client.onboardingRunDestination, send: (snapshot) => client.sendOnboardingRun(snapshot) };
 }

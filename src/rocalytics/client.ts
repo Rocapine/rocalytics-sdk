@@ -97,11 +97,12 @@ export class RocalyticsClient {
 
   /**
    * Where `sendOnboardingRun` delivers: the `/onboarding-response` endpoint of
-   * `baseUrl`. Undefined when a `fetch` is passed, which may never reach it.
+   * `baseUrl`, marked ` (custom fetch)` when a `fetch` is passed, which may
+   * never reach it, so that it never counts as the real endpoint.
    */
-  get onboardingRunDestination(): string | undefined {
-    if (this.options.fetch) return undefined;
-    return `${this.options.baseUrl ?? ROCALYTICS_API_BASE}/functions/v1/onboarding-response`;
+  get onboardingRunDestination(): string {
+    const url = `${this.options.baseUrl ?? ROCALYTICS_API_BASE}/functions/v1/onboarding-response`;
+    return this.options.fetch ? `${url} (custom fetch)` : url;
   }
 
   /** Sends a named analytics event. */

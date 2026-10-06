@@ -3,6 +3,9 @@ import type { AnswerInput, OnboardingRun, OnboardingRunSnapshot } from "../src/o
 import { SIZE_LIMIT, sizeOf } from "./contract";
 import { IDENTITY, MANIFEST, harness, type Harness } from "./harness";
 
+// Recording 500 entries one tick at a time takes seconds, past Vitest's 5 s default under load.
+const SLOW_MS = 20_000;
+
 const BUDGET = 261_120;
 
 /**
@@ -88,7 +91,7 @@ describe("the 500-entry cap (D8, D26)", () => {
     expect(done.steps[499].exited_at! < done.completed_at!).toBe(true);
     // Truncation only stops recording: one send reported it, later screens send nothing new.
     expect(h.sink.received.filter((s) => s.truncated).length).toBeLessThanOrEqual(3);
-  });
+  }, SLOW_MS);
 
   it("after truncation, answers and property changes are not recorded either", async () => {
     const h = harness();
@@ -105,7 +108,7 @@ describe("the 500-entry cap (D8, D26)", () => {
     expect(done.steps).toEqual(before.steps);
     expect(done.properties).toBeUndefined();
     expect(h.diagnostics.map((d) => d.code)).toContain("truncated");
-  });
+  }, SLOW_MS);
 });
 
 describe("the 261,120-byte recording budget (D26)", () => {

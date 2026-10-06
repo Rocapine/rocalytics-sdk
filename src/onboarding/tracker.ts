@@ -315,18 +315,21 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
               message: `the stored state has format ${format}, which this version does not know: it is left untouched, and this session runs without persistence`,
             });
           }
-          // Written for another destination: never sent here, so discarded.
-          if (destinationChanged || (raw as { destination?: unknown }).destination !== destination) {
-            rewrite = true;
-            return report({
-              code: "destination-changed",
-              message: `the stored state was written for another destination than this sink's: discarded, nothing of it is sent`,
-            });
-          }
           const { current, outboxes: stored, problems } = parsePersisted(raw);
           if (problems.length) {
             rewrite = true;
             report({ code: "storage", message: `${problems.join("; ")}: discarded` });
+          }
+          // What is left, written for another destination: never sent here, so discarded.
+          if (destinationChanged || (raw as { destination?: unknown }).destination !== destination) {
+            if (!current && stored.length === 0) return;
+            rewrite = true;
+            // After a reconfigure to another destination, that was reported already.
+            if (destinationChanged) return;
+            return report({
+              code: "destination-changed",
+              message: `the stored state was written for another destination than this sink's: discarded, nothing of it is sent`,
+            });
           }
           // Merged even after dispose(), so a write still queued keeps them; but
           // sent only before it, and only once the predecessor's last attempts

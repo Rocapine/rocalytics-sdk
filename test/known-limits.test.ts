@@ -12,6 +12,9 @@ import type { StartOptions } from "../src/onboarding";
 import { ManualTime } from "./fakes";
 import { IDENTITY, MANIFEST, freshProcess, harness } from "./harness";
 
+// Recording 500 entries one tick at a time takes seconds, past Vitest's 5 s default under load.
+const SLOW_MS = 20_000;
+
 const KEY = "studio-sdk:onboarding-run";
 const readme = fs.readFileSync(path.join(__dirname, "..", "README.md"), "utf8");
 
@@ -435,7 +438,7 @@ describe("item 4: resuming a truncated run", () => {
     expect(resumed?.currentStepKey).toBe(beforeKill.steps[beforeKill.steps.length - 1].step_key);
     expect(resumed?.currentStepKey).not.toBe("summary");
     expect(b.sink.last!.steps).toHaveLength(beforeKill.steps.length);
-  });
+  }, SLOW_MS);
 });
 
 describe("item 5 (fixed): a numeric Studio id is sent in decimal", () => {

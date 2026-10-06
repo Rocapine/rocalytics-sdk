@@ -24,7 +24,7 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
   - Once a completed snapshot is accepted, the sink sends `onboarding_completed` once per run, with the run-scoped deduplication id `${rocaId}-onboarding_completed-${run_id}`. Each completed run on a device counts once, and a resend of the same run's completion is deduplicated.
   - `rocalyticsOutcome`: a 2xx is accepted. Only a body saying `{"outcome": "rejected"}` is permanent. Any other answer is transient.
 - Superwall event tracking is not ported: there is no `trackSuperwallEvent`, and nothing calls `/superwall-events`.
-- `Sink.destination` (optional): where a sink delivers. `createHttpSink` sets it to its `url`, and `createRocalyticsOnboardingSink` to the client's onboarding endpoint, exposed as the new `RocalyticsClient.onboardingRunDestination`. Neither sets it when a `fetch` is injected.
+- `Sink.destination` (optional): where a sink delivers. `createHttpSink` sets it to its `url`, and `createRocalyticsOnboardingSink` to the client's onboarding endpoint, exposed as the new `RocalyticsClient.onboardingRunDestination`. With an injected `fetch`, both mark it as `<url> (custom fetch)`. Headers are not part of it.
 - `@rocapine/studio-sdk/core`: `Delivery.idle()`, which resolves once no attempt is in flight. `/core` has no stability promise: a custom implementation of `Delivery` must add it.
 
 ### Fixed
@@ -39,7 +39,7 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
   - A reconfigure hands the old tracker's unsent snapshots and run over only when the new sink has the same `destination`, or, when either sink has none, is the same object.
   - Otherwise the new tracker takes nothing, in memory or from storage. It discards the stored state, and reports `destination-changed`.
   - Stored state is now stamped with the writing sink's destination. A launch discards stored state written for another destination instead of sending it; two sinks without a destination count as one there.
-  - A custom sink without a `destination`, built anew on each `configure()`, now loses what the old tracker left unsent on every reconfigure. Give it a `destination`, or reuse the sink object.
+  - On a reconfigure, a sink with another `destination`, or a custom sink without one that is not the same object, now gets nothing of what the old tracker left unsent. The stock sinks always have a destination, so rebuilding them with the same URL keeps the handoff. A custom sink built anew on each `configure()` should set a `destination`, or be reused.
 - `@rocapine/studio-sdk/onboarding`: a stored unsent snapshot that a disposed tracker first reads after `dispose()` no longer gets a last attempt from it. It stays in storage, and the next tracker on the same `storageKey` sends it, so the two never send it at once.
 - The package declares optional peer dependencies: `expo-application`, `expo-crypto`, `expo-device`, `expo-modules-core`, `expo-network`, `expo-secure-store` and `react-native`. Every range is `*`, so an app that already has any version of them installs the package without a peer conflict, and the client's run-time presence probe is the compatibility check. Only `/rocalytics` loads them. `/onboarding` and `/core` still depend on nothing, and `npm run check:exports` verifies that over their built require graph.
 

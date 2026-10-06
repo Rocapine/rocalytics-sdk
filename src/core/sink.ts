@@ -26,7 +26,8 @@ export interface Sink<T = unknown> {
    * destination are interchangeable: a reconfigure hands the old tracker's
    * unsent snapshots to the new one, and stored ones are sent by either.
    * Without it, only the same sink object counts as the same destination.
-   * Leave it unset on a sink that does not really deliver there (a test double).
+   * A test double must not claim a real destination: the stock sinks mark
+   * theirs ` (custom fetch)` when given a `fetch`. Headers are not part of it.
    */
   readonly destination?: string;
   send(payload: T): Promise<SinkResult> | SinkResult;

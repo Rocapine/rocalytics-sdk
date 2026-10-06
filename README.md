@@ -132,7 +132,7 @@ That run produces one payload per send. The completed one lists `welcome`, `goal
 - writes already queued still land;
 - each unsent snapshot gets one last attempt.
 
-A snapshot the sink does not take is then **handed, in memory, to the next tracker created on the same `storageKey`**, as `configure()` does, when that tracker's sink has the same destination (see [A custom sink](#a-custom-sink)). That tracker sends it with its own sink and retries, with or without storage. It keeps them in its own writes from the start, but sends none of the old tracker's snapshots, handed over or read from storage, until the old tracker's last attempts are answered (each within `attemptTimeoutMs`), and it drops any snapshot one of them delivered, so a reconfigure sends each snapshot once and storage never loses one still waiting for its answer. A tracker created and disposed without a run of its own (two `configure()` calls in a row, for example) passes on everything it was handed. The old tracker's run is handed over too, in its newest state: the new tracker's `resume()` returns it, with storage or without, and returns null if the old tracker completed it or started another. So a write of the old tracker's that lands after the new tracker read storage (past the bounded wait) can neither be resumed from an older state nor hide the newer one: the new tracker writes its own state again as each such write lands, once it has a run or was handed one.
+A snapshot the sink does not take is then **handed, in memory, to the next tracker created on the same `storageKey`**, as `configure()` does, when that tracker's sink has the same destination (see [A custom sink](#a-custom-sink)). That tracker sends it with its own sink and retries, with or without storage. It keeps them in its own writes from the start, but sends none of the old tracker's snapshots, handed over or read from storage, until the old tracker's last attempts are answered (each within `attemptTimeoutMs`), and it drops any snapshot one of them delivered, so a reconfigure sends each snapshot once and storage never loses one still waiting for its answer. A tracker created and disposed without a run of its own (two `configure()` calls in a row, for example) passes on everything it was handed. The old tracker's run is handed over too, in its newest state: the new tracker's `resume()` returns it, with storage or without, and returns null if the old tracker completed it or started another. So a write of the old tracker's that lands after the new tracker read storage (past the bounded wait) can neither be resumed from an older state nor hide the newer one: the new tracker writes its own state again as each such write lands, once it has a run or was handed one. After a reconfigure to another destination it does so too, which erases what the old tracker wrote.
 
 With working storage, an unsent snapshot also stays in storage for the next launch. The next launch may send again a snapshot that the sink took during `dispose()`, with the same `seq` and body, which the ingest ignores. Without working storage, only a tracker created in the same process gets it (see [Known limits of the tracker](#known-limits-of-the-tracker)).
 
@@ -178,7 +178,7 @@ The tracker assumes the app restores the screen of the last recorded entry. **A 
 
 If the app does not restore the position, call `start()` instead.
 
-After a reconfigure, `resume()` returns the run the disposed tracker on the same `storageKey` was recording, if it is still in progress, in the newest state that tracker had, whether or not storage is configured.
+After a reconfigure, `resume()` returns the run the disposed tracker on the same `storageKey` was recording, if it is still in progress, in the newest state that tracker had, whether or not storage is configured. It returns null when the new sink has another destination.
 
 `resume()` waits for the stored state to be read, however long the storage takes; a read slower than `storageReadTimeoutMs` is reported, not abandoned. **A storage that never answers the read means `resume()` never resolves.** An app that cannot wait should race it with its own timeout, and call `start()` if the timeout wins: `start()` never waits for the read. The run it starts is sent as usual, and stored once the read lands.
 
@@ -211,9 +211,11 @@ A sink that throws, or returns anything else, counts as transient.
 - Otherwise the new tracker takes nothing, discards the stored state it reads, and reports `destination-changed`.
 - Stored state is stamped with the destination of the tracker that wrote it, and a later launch discards, unsent, what was written for another destination. Two sinks without a destination count as the same one there, since nothing tells them apart.
 
-`createHttpSink` sets `destination` to its `url`, and `createRocalyticsOnboardingSink` to the client's onboarding endpoint. Neither sets it when a `fetch` is injected, since that `fetch` may never reach the URL.
+`createHttpSink` sets `destination` to its `url`, and `createRocalyticsOnboardingSink` to the client's onboarding endpoint, so a sink built anew on each `configure()` with the same URL keeps the same destination. When a `fetch` is injected, both mark it, as `<url> (custom fetch)`: that `fetch` may never reach the URL, so a mock on the production URL never counts as the production sink, while two mocks on the same URL still match.
 
-A custom sink without a `destination`, built anew on each `configure()`, therefore loses on every reconfigure what the old tracker left unsent. Give it a `destination`, or reuse the sink object.
+The destination is the URL only. Headers are not part of it: a collector that picks its environment from a header (a token, for example) needs distinct URLs per environment, or a custom sink with a `destination` of its own.
+
+A sink whose `destination` differs from the old one's, or a custom sink without one that is not the same object, therefore gets nothing of what the old tracker left unsent on a reconfigure. A custom sink built anew on each `configure()` should set a `destination`, or be reused.
 
 **Use one `storageKey` per destination.** A test or staging configuration should use a `storageKey` of its own, so that switching destinations discards nothing.
 

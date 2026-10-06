@@ -13,21 +13,27 @@ const KEY = "studio-sdk:onboarding-run";
 const STAGING = "https://staging.example.com/v1/onboarding-runs";
 const PRODUCTION = "https://collector.example.com/v1/onboarding-runs";
 
+const fakeFetch = async () => ({ text: async () => "" });
+/** The destination createHttpSink gives `url`, with the global fetch or an injected one. */
+const httpDestination = (url: string, injectedFetch: boolean) => createHttpSink(injectedFetch ? { url, fetch: fakeFetch } : { url }).destination!;
+
 describe("the stock sinks' destination", () => {
-  it("createHttpSink: its URL; none when a fetch is injected, which may never reach that URL", () => {
+  it("createHttpSink: its URL, marked when a fetch is injected, which may never reach that URL", () => {
     expect(createHttpSink({ url: PRODUCTION }).destination).toBe(PRODUCTION);
-    expect(createHttpSink({ url: PRODUCTION, fetch: async () => ({ text: async () => "" }) }).destination).toBeUndefined();
+    expect(createHttpSink({ url: PRODUCTION, fetch: fakeFetch }).destination).toBe(`${PRODUCTION} (custom fetch)`);
   });
 
-  it("createRocalyticsOnboardingSink: the client's onboarding endpoint; none when the client has an injected fetch", () => {
-    expect(createRocalyticsOnboardingSink(new RocalyticsClient({ onDiagnostic: () => {} })).destination).toBe(
-      "https://rocalytics-api.rocapine.io/functions/v1/onboarding-response",
-    );
+  it("createRocalyticsOnboardingSink: the client's onboarding endpoint, marked when the client has an injected fetch", () => {
+    const ENDPOINT = "https://rocalytics-api.rocapine.io/functions/v1/onboarding-response";
+    const client = new RocalyticsClient({ onDiagnostic: () => {} });
+    expect(createRocalyticsOnboardingSink(client).destination).toBe(ENDPOINT);
+    // A new sink object on each call, and on each new client: the same destination, so a reconfigure hands over.
+    expect(createRocalyticsOnboardingSink(client).destination).toBe(createRocalyticsOnboardingSink(new RocalyticsClient({ onDiagnostic: () => {} })).destination);
     expect(createRocalyticsOnboardingSink(new RocalyticsClient({ baseUrl: "https://staging.rocapine.io", onDiagnostic: () => {} })).destination).toBe(
       "https://staging.rocapine.io/functions/v1/onboarding-response",
     );
     const mocked = new RocalyticsClient({ fetch: async () => ({ ok: true, status: 204, json: async () => ({}) }) as never, onDiagnostic: () => {} });
-    expect(createRocalyticsOnboardingSink(mocked).destination).toBeUndefined();
+    expect(createRocalyticsOnboardingSink(mocked).destination).toBe(`${ENDPOINT} (custom fetch)`);
   });
 });
 
@@ -73,7 +79,7 @@ describe("a reconfigure to another destination", () => {
     await b.tick(60_000); // any late write of A's lands
     expect(resumed).toBeNull();
     expect(fromRuns(runs, b.sink.received)).toEqual([]);
-    expect(b.diagnostics.map((d) => d.code)).toContain("destination-changed");
+    expect(b.diagnostics.filter((d) => d.code === "destination-changed")).toHaveLength(1); // once, not again for the stored state
     await b.tracker.idle();
     expect(inner.dump()[KEY] ?? "").not.toMatch(new RegExp(runs.join("|"))); // discarded, a late write's included
     b.kill();
@@ -194,6 +200,8 @@ describe("stored state written for another destination, at the next launch", () 
     ["staging, then production", STAGING, PRODUCTION],
     ["a sink without a destination (a mock), then production", null, PRODUCTION],
     ["production, then a sink without a destination", PRODUCTION, null],
+    ["staging with an injected fetch, then production with an injected fetch", httpDestination(STAGING, true), httpDestination(PRODUCTION, true)],
+    ["a mock on the production URL (an injected fetch), then the real production sink", httpDestination(PRODUCTION, true), httpDestination(PRODUCTION, false)],
   ] as const)("%s: discarded, never sent, and reported", async (_, first, second) => {
     const { time, storage, runs } = await killedLaunch(first);
     const next = harness({ storage, time: new ManualTime(time.clock.now() + 60_000), destination: second, create: await freshProcess() });
@@ -208,12 +216,28 @@ describe("stored state written for another destination, at the next launch", () 
 
   it.each([
     ["the same URL", PRODUCTION],
-    ["no destination either time", null],
+    ["the same URL with an injected fetch both times", httpDestination(PRODUCTION, true)],
+    ["no destination either time (custom sinks)", null],
   ] as const)("%s: kept and delivered", async (_, destination) => {
     const { time, storage, runs } = await killedLaunch(destination);
     const next = harness({ storage, time: new ManualTime(time.clock.now() + 60_000), destination, create: await freshProcess() });
     expect((await next.tracker.resume())?.runId).toBe(runs[1]);
     await next.tick(60_000);
     expect(next.sink.received.some((s) => s.run_id === runs[0] && s.status === "completed")).toBe(true);
+  });
+});
+
+describe("diagnostics for stored state", () => {
+  it.each([
+    ["not an object", JSON.stringify([1, 2])],
+    ["a malformed part, unstamped", JSON.stringify({ format: 1, current: "nope", outboxes: {} })],
+  ])("%s: reported as storage, not destination-changed", async (_, raw) => {
+    const storage = memoryStorage();
+    storage.setItem(KEY, raw);
+    const h = harness({ storage, destination: PRODUCTION });
+    await h.tick(0);
+    const codes = h.diagnostics.map((d) => d.code);
+    expect(codes).toContain("storage");
+    expect(codes).not.toContain("destination-changed");
   });
 });

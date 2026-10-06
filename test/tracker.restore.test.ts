@@ -4,6 +4,9 @@ import { accept } from "./contract";
 import { ManualTime } from "./fakes";
 import { IDENTITY, MANIFEST, harness, type Harness } from "./harness";
 
+// Recording 500 entries one tick at a time takes seconds, past Vitest's 5 s default under load.
+const SLOW_MS = 20_000;
+
 const T0 = Date.parse("2026-01-10T08:00:00.000Z");
 const at = (s: number) => new Date(T0 + s * 1000).toISOString();
 
@@ -117,7 +120,7 @@ describe("resume after relaunch (3.2)", () => {
     expect(b.sink.last!.status).toBe("completed");
     expect(b.sink.last!.steps[499].exited_at).toBe(beforeKill.steps[499].exited_at);
     expect(accept(restored, b.sink.last!)).toBe("accepted");
-  });
+  }, SLOW_MS);
 
   it("restored at exactly 500 entries: stops recording instead of appending entry 501", async () => {
     const a = harness();
@@ -135,7 +138,7 @@ describe("resume after relaunch (3.2)", () => {
     expect(restored.steps).toHaveLength(500);
     expect(restored.truncated).toBe(true);
     expect(restored.steps[499].exited_at).toBe(at(499)); // its last entry, the last activity
-  });
+  }, SLOW_MS);
 
   it("a completed run cannot be resumed, and its undelivered completion still arrives after the restart", async () => {
     const a = harness();
