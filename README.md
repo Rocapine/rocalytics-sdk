@@ -6,7 +6,21 @@ Headless client SDK for Onboarding Studio. The first surface is the **onboarding
 - **One payload contract.** Every send is a snapshot in the shape of the [onboarding run contract v1](docs/onboarding-run-contract.md) (`schema_version: 1`), with a [JSON Schema](docs/onboarding-run.schema.json) and [TypeScript types](docs/onboarding-run.types.ts). The contract is authoritative; this README only explains how the tracker applies it.
 - **Pluggable transport.** Snapshots go to a sink. The stock sink POSTs to an HTTP collector you configure.
 
-> Status: `0.1.0`, not yet published to npm.
+> Status: `0.1.0`, not yet published.
+
+## Installing
+
+The package is private. It is published to GitHub Packages, not the public npm registry, and only accounts with read access to the Rocapine GitHub organization can install it.
+
+1. In the app, add an `.npmrc` that maps the scope to GitHub Packages and reads a token from the environment:
+
+   ```ini
+   @rocapine:registry=https://npm.pkg.github.com
+   //npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+   ```
+
+2. Set `GITHUB_TOKEN` to a GitHub token with the `read:packages` scope, locally and as a secret in CI and EAS builds. Never commit the token.
+3. `npm install @rocapine/studio-sdk`.
 
 ## Subpaths
 
@@ -388,5 +402,7 @@ Changes are recorded in [`CHANGELOG.md`](CHANGELOG.md), in Keep a Changelog form
 
 1. Move the Unreleased entries under a new `## [x.y.z] - YYYY-MM-DD` heading. Use `unreleased` instead of the date until the version is published.
 2. Leave an empty `## [Unreleased]` section above it.
+
+To publish, from a clean checkout of `main`: `npm ci`, then `npm publish`. `publishConfig` sends it to GitHub Packages, and `prepublishOnly` runs lint, the test type-check, the tests and the exports check first, so a failing tree cannot be published. Publishing needs a GitHub token with the `write:packages` scope.
 
 A test fails if the `package.json` version has no matching heading, or if the Unreleased section is missing.
