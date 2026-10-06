@@ -203,6 +203,16 @@ The tracker enforces the contract's limits:
 
 When recording one more entry, answer or property change would cross a limit, the tracker stops recording and sets `truncated: true`. It keeps the entries it already has, and it still sends `completed` when the run completes.
 
+## Known limits of the tracker
+
+Unlike the limits above, which come from the contract, these are the tracker's own. Each is intended in this release, and a test pins it.
+
+- **A late write from a replaced tracker.** A tracker created on a `storageKey` whose previous tracker was disposed (as `configure()` does) waits for that tracker's queued writes before it reads, but only up to the old tracker's `idle()` bound: about twice `storageReadTimeoutMs`. A write that takes longer lands after the new tracker's writes and replaces the stored state with the old tracker's. Until the new tracker writes again, at its next change, the next launch cannot resume the new run, and does not find the new run's unsent snapshot. A write that never finishes never lands, so it cannot do this.
+- **Slow storage.** If the stored state is not read within `storageReadTimeoutMs` (default 5,000 ms), `resume()` resolves null, and keeps resolving null for the rest of the session, even once the read lands. The run that was in progress is not resumed. Writes go on once the read lands, so a run started in the meantime is what the next launch finds.
+- **No working storage at dispose.** `dispose()` gives each unsent snapshot one last attempt and keeps the ones the sink does not take in storage. Without storage, with persistence off for the session (storage that cannot be read, or a stored format this version does not know), or with a write that never finishes, a snapshot whose last attempt fails is lost, a completion included. `configure()` disposes the tracker it replaces, so this applies to a reconfigure too.
+- **The resumed screen.** `resume()` records the restored screen as a new entry for the last recorded step. There is no way to name a different screen. A truncated run records no entry at all, and its `currentStepKey` is the last step recorded before the limit.
+- **Numeric Studio ids.** `onboardingId`, `deploymentId` and `audienceId` are strings. The contract sends a numeric Studio id in decimal, but the tracker does not convert one: a number passed at run time (from untyped JSON, for example), or `studio: null`, makes the start invalid, so it reports `invalid-start` and records nothing. Pass `String(id)`, and leave `studio` out rather than passing null. An id above `Number.MAX_SAFE_INTEGER` is already wrong as a number, so it must reach the app as a string.
+
 ## Rocalytics client
 
 `@rocapine/studio-sdk/rocalytics` is the Rocalytics client that apps used to copy into their codebase as `rocalytics.client.ts`. It sends the same requests as the reference client: a test replays scenarios captured from the reference itself and compares every URL, header and body.
