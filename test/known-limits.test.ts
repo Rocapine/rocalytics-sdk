@@ -23,7 +23,6 @@ describe("the README's known limits of the tracker", () => {
 
   it.each([
     "A late write from a replaced tracker.",
-    "Slow storage.",
     "No working storage at dispose.",
     "The resumed screen.",
   ])("names the limit %s", (label) => {

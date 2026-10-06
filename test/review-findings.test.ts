@@ -603,7 +603,7 @@ describe("R3 blocker: a reconfigure with a fresh storage adapter over the same s
   });
 });
 
-describe("N-a: a storage read that times out", () => {
+describe("N-a: a storage read slower than storageReadTimeoutMs", () => {
   function slowStorage(time: ManualTime, readDelayMs: number, initial?: string) {
     const inner = memoryStorage();
     if (initial) inner.setItem(KEY, initial);
@@ -613,11 +613,12 @@ describe("N-a: a storage read that times out", () => {
     return { inner, storage };
   }
 
-  it("resume() stays null for the rest of the session, even after the late read finds a run", async () => {
+  it("resume() waits for the read, past the bound, and resolves the run it finds; the slow read is reported", async () => {
     // A stored in-progress run, written by a previous launch.
     const time = new ManualTime();
     const prev = harness({ time });
-    prev.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST }).enterStep("welcome");
+    const old = prev.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    old.enterStep("welcome");
     await prev.tick();
     await prev.tracker.idle();
     prev.kill();
@@ -628,12 +629,27 @@ describe("N-a: a storage read that times out", () => {
     let first: unknown = "pending";
     void h.tracker.resume().then((r) => (first = r));
     await h.tick(1000);
-    expect(first).toBeNull();
+    expect(first).toBe("pending");
+    expect(h.diagnostics.some((d) => d.code === "storage" && /1000 ms/.test(d.message))).toBe(true);
     await h.tick(10_000); // the late read lands
-    expect(await h.tracker.resume()).toBeNull();
+    expect(first).not.toBe("pending");
+    expect((first as { runId: string } | null)?.runId).toBe(old.runId);
+    expect(h.sink.last!.run_id).toBe(old.runId);
+    expect(await h.tracker.resume()).toBeNull(); // once per session
   });
 
-  it("writes resume once the late read lands: a run started after the timeout is what the next launch finds", async () => {
+  it("a read that never answers: resume() never resolves", async () => {
+    const time = new ManualTime();
+    const storage = Object.assign(memoryStorage(), { getItem: () => new Promise<string | null>(() => {}) });
+    // Its own key: nothing here ever settles.
+    const h = harness({ storage, time, storageReadTimeoutMs: 1000, storageKey: "test:n-a-never" });
+    let resumed: unknown = "pending";
+    void h.tracker.resume().then((r) => (resumed = r));
+    await h.tick(600_000);
+    expect(resumed).toBe("pending");
+  });
+
+  it("start() is not held back by the slow read: a run started meanwhile is sent, and is what the next launch finds", async () => {
     const time = new ManualTime();
     const prev = harness({ time });
     const old = prev.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
@@ -644,18 +660,22 @@ describe("N-a: a storage read that times out", () => {
 
     const { inner, storage } = slowStorage(time, 8000, prev.storage.dump()[KEY]);
     const h = harness({ storage: storage as ReturnType<typeof memoryStorage>, time, storageReadTimeoutMs: 1000 });
-    void h.tracker.resume();
-    await h.tick(1000); // timed out
+    let resumed: unknown = "pending";
+    void h.tracker.resume().then((r) => (resumed = r));
+    await h.tick(1000); // past the bound: resume() is still waiting
     const fresh = h.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
     fresh.enterStep("welcome");
+    await h.tick(2000); // persistTimeoutMs: the send does not wait for the read either
+    expect(h.sink.last!.run_id).toBe(fresh.runId);
     await h.tick(10_000); // the late read lands; the queued writes follow it
+    expect(resumed).toBeNull(); // a run was started this session
     await h.tracker.idle();
     h.kill();
 
     const next = harness({ storage: inner, time: new ManualTime(time.clock.now() + 60_000) });
-    const resumed = await next.tracker.resume();
-    expect(resumed?.runId).toBe(fresh.runId);
-    expect(resumed?.runId).not.toBe(old.runId);
+    const again = await next.tracker.resume();
+    expect(again?.runId).toBe(fresh.runId);
+    expect(again?.runId).not.toBe(old.runId);
   });
 });
 

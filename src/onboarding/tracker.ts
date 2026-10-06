@@ -58,11 +58,13 @@ export interface TrackerConfig {
    */
   persistTimeoutMs?: number;
   /**
-   * How long `resume()` waits for the stored state to be read. Past it,
-   * `resume()` resolves null, and stays null for the rest of the session;
-   * writes still go on once the read lands. `idle()` waits at most this long
-   * for the read and as long again for queued writes, so up to about twice
-   * this. Default 5,000 ms.
+   * How long a storage read may take before it is reported as slow. It does
+   * not cut `resume()` short: `resume()` waits for the read however long it
+   * takes. It bounds `idle()`, which waits at most this long for the read and
+   * as long again for queued writes, so up to about twice this; and with it,
+   * how long a tracker created after a `dispose()` on the same `storageKey`
+   * waits for the disposed one's writes before it reads. `start()` never waits
+   * for the read. Default 5,000 ms.
    */
   storageReadTimeoutMs?: number;
   /** Receives what the tracker declined to do. Default: `console.warn`. */
@@ -106,6 +108,10 @@ export interface OnboardingRunTracker {
    * call `start`. The restored screen is recorded as a new entry for the last
    * recorded step. A truncated run is still returned (so it can complete) but
    * records no new entry. Null once a run was started this session.
+   *
+   * It waits for the stored state to be read, however long that takes: a
+   * storage that never answers the read means it never resolves. An app that
+   * cannot wait should race it with its own timeout and call `start` instead.
    */
   resume(): Promise<OnboardingRun | null>;
   /** Resolves once queued storage writes are done. */
@@ -160,8 +166,8 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
   // (twice), or it holds a format this version does not know. The session then
   // runs without persistence, and the stored value is left as it is.
   let persistenceOff = false;
-  // A storage read that timed out: resume() stays null for the rest of the session.
-  let readTimedOut = false;
+  // The slow read was reported (once).
+  let readSlow = false;
   const storageKey = config.storageKey ?? "studio-sdk:onboarding-run";
   const store: SerialStore<unknown> | null = config.storage
     ? createSerialStore<unknown>(config.storage, storageKey, (e) =>
@@ -286,19 +292,19 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
     });
 
   /**
-   * Waits for the stored state to be read, at most storageReadTimeoutMs. On a
-   * timeout, resume() stays null for the rest of the session. Writes are not
-   * stopped: each is queued behind the read and composed after it, so once a
-   * late read lands they go on with what it found.
+   * Waits for the stored state to be read, at most storageReadTimeoutMs, and
+   * reports a read that takes longer. The read itself goes on: resume() still
+   * waits for it, and writes, each queued behind it and composed after it, go
+   * on with what it found once it lands.
    */
   const waitLoaded = async (): Promise<boolean> => {
     if (!store) return true;
     const ok = await within(loaded.then(() => true), storageReadTimeoutMs);
-    if (!ok && !readTimedOut) {
-      readTimedOut = true;
+    if (!ok && !readSlow) {
+      readSlow = true;
       report({
         code: "storage",
-        message: `the stored state could not be read within ${storageReadTimeoutMs} ms: nothing will be resumed this session`,
+        message: `the stored state has not been read within ${storageReadTimeoutMs} ms: resume() waits for it`,
       });
     }
     return ok;
@@ -568,7 +574,8 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
 
     async resume() {
       try {
-        if (!(await waitLoaded()) || readTimedOut) return null;
+        void waitLoaded(); // reports a slow read
+        await loaded;
         if (disposed || startedThisSession || !persistedCurrent) return null;
         const state = persistedCurrent;
         persistedCurrent = null;

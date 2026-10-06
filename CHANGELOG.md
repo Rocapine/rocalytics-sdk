@@ -27,6 +27,7 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
 
 ### Fixed
 
+- `@rocapine/studio-sdk/onboarding`: `resume()` waits for the stored state to be read, however long storage takes. A read slower than `storageReadTimeoutMs` used to make `resume()` resolve null for the rest of the session, so a run in progress was not resumed. Now such a read is reported through `onDiagnostic` and `resume()` resolves once it lands. A read that never answers means `resume()` never resolves, so an app that cannot wait should race it with its own timeout. `storageReadTimeoutMs` still bounds `idle()`, and so how long a tracker created after a `dispose()` on the same key waits for the disposed one's writes. `start()` never waits for the read.
 - `@rocapine/studio-sdk/onboarding`: a numeric `studio.onboardingId`, `deploymentId` or `audienceId` passed at run time is sent as its decimal string, as the contract says, when it is a safe non-negative integer. It used to make the start invalid. A fraction, a negative number, `NaN`, `Infinity` or an integer above `Number.MAX_SAFE_INTEGER` is still `invalid-start`, and so is `studio: null`. The TypeScript type stays `string`.
 
 ### Changed

@@ -112,7 +112,7 @@ That run produces one payload per send. The completed one lists `welcome`, `goal
 | `storageKey` | `studio-sdk:onboarding-run` | One restorable run per key. |
 | `debounceMs` | `500` | Changes within this window go out as one send. `complete()` and `background()` skip the debounce. |
 | `persistTimeoutMs` | `1000` | With `storage`, every snapshot (completion and background included) is written before it is sent, waiting at most this long for the write. |
-| `storageReadTimeoutMs` | `5000` | How long `resume()` waits for the stored state to be read. Past it, `resume()` resolves null for the rest of the session; writes go on once the read lands. `idle()` waits up to this long for the read and as long again for queued writes, so about twice this. |
+| `storageReadTimeoutMs` | `5000` | How long a storage read may take before it is reported (a `storage` diagnostic). It does not cut `resume()` short. It bounds `idle()`, which waits up to this long for the read and as long again for queued writes, so about twice this, and with it how long a tracker created after a `dispose()` on the same `storageKey` waits for the disposed one's writes. `start()` never waits for the read. |
 | `retry` | `1000 ms × 2, ≤ 60 s` | Backoff between retries of a transient failure. |
 | `onDiagnostic` | `console.warn` | Receives what the tracker declined to do, as `{ code, message, runId? }`. |
 | `clock`, `timers`, `uuid` | system | Injected for tests. `uuid` must return a lowercase UUID; the default is UUIDv7. |
@@ -169,6 +169,8 @@ The tracker assumes the app restores the screen of the last recorded entry. **A 
 
 If the app does not restore the position, call `start()` instead.
 
+`resume()` waits for the stored state to be read, however long the storage takes; a read slower than `storageReadTimeoutMs` is reported, not abandoned. **A storage that never answers the read means `resume()` never resolves.** An app that cannot wait should race it with its own timeout, and call `start()` if the timeout wins: `start()` never waits for the read, and the run it starts is sent and stored as usual once the read lands.
+
 ## Delivery
 
 - **Every send is a full snapshot** with a `seq` that rises by one per send. The server keeps the highest, so a lost request is repaired by the next one.
@@ -208,7 +210,6 @@ When recording one more entry, answer or property change would cross a limit, th
 Unlike the limits above, which come from the contract, these are the tracker's own. Each is intended in this release, and a test pins it.
 
 - **A late write from a replaced tracker.** A tracker created on a `storageKey` whose previous tracker was disposed (as `configure()` does) waits for that tracker's queued writes before it reads, but only up to the old tracker's `idle()` bound: about twice `storageReadTimeoutMs`. A write that takes longer lands after the new tracker's writes and replaces the stored state with the old tracker's. Until the new tracker writes again, at its next change, the next launch cannot resume the new run, and does not find the new run's unsent snapshot. That next write does the reverse damage: the new tracker read storage before the late write landed, so it writes only its own state and erases the old tracker's. If the old tracker left an unsent snapshot in that write, a completion included, it is lost. So a late write loses one run's data either way: the new run's until the new tracker writes again, and the old run's unsent snapshot once it does. A write that never finishes never lands, so it cannot do this.
-- **Slow storage.** If the stored state is not read within `storageReadTimeoutMs` (default 5,000 ms), `resume()` resolves null, and keeps resolving null for the rest of the session, even once the read lands. The run that was in progress is not resumed. Writes go on once the read lands, so a run started in the meantime is what the next launch finds.
 - **No working storage at dispose.** `dispose()` gives each unsent snapshot one last attempt and keeps the ones the sink does not take in storage. Without storage, with persistence off for the session (storage that cannot be read, or a stored format this version does not know), with a write that never finishes, or with a write that lands after a new tracker on the same `storageKey` stopped waiting for it and is then overwritten by that tracker's next write (see the first limit), a snapshot whose last attempt fails is lost, a completion included. `configure()` disposes the tracker it replaces, so this applies to a reconfigure too.
 - **The resumed screen.** `resume()` records the restored screen as a new entry for the last recorded step. There is no way to name a different screen. A truncated run records no entry at all, and its `currentStepKey` is the last step recorded before the limit.
 
