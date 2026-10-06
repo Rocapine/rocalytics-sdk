@@ -247,6 +247,28 @@ describe("createDelivery: close()", () => {
     expect(sink.received.map((b) => (b as { seq: number }).seq)).toEqual([1, 1, 2]);
     expect(delivery.pending()?.seq).toBe(2); // kept, never dropped
   });
+
+  it("idle() resolves once no attempt is in flight, after the one a newer snapshot gets included", async () => {
+    const time = new ManualTime();
+    const sink = new MemorySink();
+    sink.respond = (_, n) => new Promise((r) => time.timers.setTimeout(() => r({ outcome: n === 1 ? "transient" : "accepted" }), 1000));
+    const delivery = createDelivery({ sink, timers: time.timers });
+    let idle = false;
+    void delivery.idle().then(() => (idle = true));
+    await flushMicrotasks();
+    expect(idle).toBe(true); // nothing in flight
+
+    delivery.enqueue({ seq: 1, body: { seq: 1 } });
+    delivery.close();
+    idle = false;
+    void delivery.idle().then(() => (idle = true));
+    delivery.enqueue({ seq: 2, body: { seq: 2 } }); // arrives during the last attempt of seq 1
+    await time.advance(1000); // seq 1 answers transient; seq 2 gets its attempt
+    expect(idle).toBe(false);
+    await time.advance(1000); // seq 2 is accepted
+    expect(idle).toBe(true);
+    expect(delivery.pending()).toBeNull();
+  });
 });
 
 describe("createSerialStore: read() and the shared queue", () => {
