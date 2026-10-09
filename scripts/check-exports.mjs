@@ -62,7 +62,7 @@ for (const sub of ["onboarding", "core"]) {
   }
   const reached = [...seen].map((f) => path.relative(path.join(root, "dist"), f));
   check(external.length === 0, `/${sub} transitively requires no package${external.length ? `: ${external.join(", ")}` : ""} (${reached.length} files)`);
-  check(!reached.some((f) => f.startsWith(`rocalytics${path.sep}`)), `/${sub} never reaches a dist/client file`);
+  check(!reached.some((f) => f.startsWith(`client${path.sep}`)), `/${sub} never reaches a dist/client file`);
 }
 
 const PEERS = Object.keys(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).peerDependencies ?? {}).sort();
