@@ -67,7 +67,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "gen:schema-types": "UPDATE_SCHEMA_TYPES=1 vitest run test/schema-types.test.ts",
+    "gen:schema-types": "UPDATE_SCHEMA_TYPES=1 vitest run test/schema-types.test.ts test/paywall-schema-types.test.ts",
     "check:exports": "node scripts/check-exports.mjs"
   },
   "peerDependencies": {
