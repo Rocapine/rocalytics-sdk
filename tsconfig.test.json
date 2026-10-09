@@ -13,7 +13,8 @@
     "paths": {
       "@rocapine/rocalytics-sdk/onboarding": ["./src/onboarding/index.ts"],
       "@rocapine/rocalytics-sdk/core": ["./src/core/index.ts"],
-      "@rocapine/rocalytics-sdk/client": ["./src/client/index.ts"]
+      "@rocapine/rocalytics-sdk/client": ["./src/client/index.ts"],
+      "@rocapine/rocalytics-sdk/paywall": ["./src/paywall/index.ts"]
     }
   },
   "include": ["src/**/*", "test/**/*", "docs/**/*.ts", "examples/**/*.ts"],
