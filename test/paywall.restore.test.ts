@@ -80,7 +80,7 @@ describe("paywall tracker persistence", () => {
     second.tracker.start({ ...INFO, paywallId: "pw-2" }); // before load resolves
     await flushMicrotasks();
     await second.tracker.idle();
-    const stored = JSON.parse(Object.values(storage.dump())[0]);
-    expect(Object.values(stored).map((o: { body: PaywallPresentationSnapshot }) => o.body.paywall.paywall_id).sort()).toEqual(["pw-1", "pw-2"]);
+    const stored = JSON.parse(Object.values(storage.dump())[0]) as Record<string, { body: PaywallPresentationSnapshot }>;
+    expect(Object.values(stored).map((o) => o.body.paywall.paywall_id).sort()).toEqual(["pw-1", "pw-2"]);
   });
 });
