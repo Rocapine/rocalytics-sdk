@@ -29,8 +29,9 @@ The package is private. It is published to GitHub Packages, not the public npm r
 | `@rocapine/rocalytics-sdk/onboarding` | The onboarding run tracker. Public API. |
 | `@rocapine/rocalytics-sdk/core` | Shared building blocks: the sink interface, latest-snapshot delivery, id minting, run context, storage. Internal: exported for custom sinks and future surfaces, with no stability promise beyond what `/onboarding` re-exports. |
 | `@rocapine/rocalytics-sdk/client` | The Rocalytics client, and a sink that delivers the tracker's runs to Rocalytics. Public API. Needs the Expo peers below. |
+| `@rocapine/rocalytics-sdk/paywall` | The paywall presentation tracker. Public API. |
 
-The package is for tracking only: it holds no remote-control code. `/onboarding` never imports `/client`, so an app that only tracks onboarding installs and bundles no native module.
+The package is for tracking only: it holds no remote-control code. `/onboarding` and `/paywall` never import `/client`, so an app that only tracks onboarding or paywalls installs and bundles no native module.
 
 ## A hand-coded onboarding
 
@@ -250,6 +251,53 @@ Unlike the limits above, which come from the contract, these are the tracker's o
 
 - **An app killed without working storage.** A snapshot the sink has not taken survives the end of the process only in storage. When the app is killed without storage, with persistence off for the session (storage that cannot be read, or a stored format this version does not know), or with a write that never finishes, such a snapshot is lost, a completion included. The same holds after a `dispose()` when no tracker is created on its `storageKey` before the app is killed. A reconfigure loses nothing: `dispose()` hands what is unsent to the next tracker in memory (see `dispose()` above).
 - **The resumed screen.** `resume()` records the restored screen as a new entry for the last recorded step. There is no way to name a different screen. A truncated run records no entry at all, and its `currentStepKey` is the last step recorded before the limit.
+
+## Paywall presentations
+
+`@rocapine/rocalytics-sdk/paywall` reports each paywall presentation as up to three snapshots (start, shown, end) in the shape of the [paywall presentation contract v1](docs/paywall-presentation-contract.md). A presentation is one `present()` call, or one display of a `Paywall` onboarding step, that resolved to a paywall. Calls refused before a paywall is chosen send nothing. An error after that sends a start and an `error` end.
+
+The tracker satisfies the paywall host's `PaywallObserver` interface structurally, so it is passed to the host as `observer`. This file is [`examples/native-paywall.ts`](examples/native-paywall.ts), type-checked by the test suite:
+
+```ts
+import { createPaywallTracker, type KeyValueStorage } from "@rocapine/rocalytics-sdk/paywall";
+import { RocalyticsClient, createRocalyticsPaywallSink } from "@rocapine/rocalytics-sdk/client";
+
+// Once, at app startup. Pass `paywallTracker` to the paywall host as `observer`:
+//   <PaywallProvider observer={paywallTracker} customScreens={SCREENS}>…</PaywallProvider>
+export function setUpPaywallTracking(rocalytics: RocalyticsClient, storage: KeyValueStorage, device: { appVersion: string; build: string; osVersion: string }) {
+  return createPaywallTracker({
+    sink: createRocalyticsPaywallSink(rocalytics),
+    context: () => ({
+      appVersion: device.appVersion,
+      build: device.build,
+      platform: "ios",
+      osVersion: device.osVersion,
+      locale: "en-US",
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    }),
+    storage, // e.g. AsyncStorage: an unsent snapshot survives the app being killed
+  });
+}
+
+// In a custom paywall screen, report the purchase with its join key:
+//   complete({ status: "purchased", transaction: {
+//     originalTransactionIdentifier,  // the SAME value passed to Rocalytics' purchase call; iOS join key
+//     purchaseToken: result.transaction.purchaseToken ?? undefined,    // Android join key: required to attribute proceeds
+//     productId: result.productIdentifier,
+//   } });
+// A restore or a web redemption is not a new purchase:
+//   complete({ status: "purchased", transaction: { restored: true } });
+```
+
+**Join keys.** The client never sends a price. Proceeds come from store transactions, joined on the key the custom screen reports:
+- **iOS:** `originalTransactionIdentifier`, the same value the app already passes to Rocalytics' `purchase` call.
+- **Android:** `purchaseToken`. The order id may be passed as `originalTransactionIdentifier` too, but it is not used to join.
+
+A purchase without its platform's join key still counts as a conversion; it earns no proceeds.
+
+**Restores.** `restored: true` marks a purchase that only restored existing access, such as a restore or a web redemption. It is not counted as a conversion.
+
+**Never in the way.** The tracker never throws, never delays `present()` and never changes its result. Invalid input, a failing context or a failing sink is reported to `onDiagnostic`. Each presentation is delivered on its own, and unsent snapshots (at most 20) are stored and resent on the next launch.
 
 ## Rocalytics client
 
