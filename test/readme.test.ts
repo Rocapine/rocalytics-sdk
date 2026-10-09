@@ -19,7 +19,7 @@ describe("the README's hand-coded onboarding example", () => {
 
   it("uses only the public /onboarding entry point", () => {
     const imports = [...example.matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1]);
-    expect(imports).toEqual(["@rocapine/studio-sdk/onboarding"]);
+    expect(imports).toEqual(["@rocapine/rocalytics-sdk/onboarding"]);
   });
 
   it.each([

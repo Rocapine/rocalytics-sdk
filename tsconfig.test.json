@@ -11,9 +11,9 @@
     // The example imports the package by name, as an app would.
     "baseUrl": ".",
     "paths": {
-      "@rocapine/studio-sdk/onboarding": ["./src/onboarding/index.ts"],
-      "@rocapine/studio-sdk/core": ["./src/core/index.ts"],
-      "@rocapine/studio-sdk/rocalytics": ["./src/rocalytics/index.ts"]
+      "@rocapine/rocalytics-sdk/onboarding": ["./src/onboarding/index.ts"],
+      "@rocapine/rocalytics-sdk/core": ["./src/core/index.ts"],
+      "@rocapine/rocalytics-sdk/client": ["./src/client/index.ts"]
     }
   },
   "include": ["src/**/*", "test/**/*", "docs/**/*.ts", "examples/**/*.ts"],

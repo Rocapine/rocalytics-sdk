@@ -1,8 +1,8 @@
-# @rocapine/studio-sdk
+# @rocapine/rocalytics-sdk
 
-Headless client SDK for Onboarding Studio. The first surface is the **onboarding run tracker**: a small, typed API that lets any onboarding report its progress in one versioned shape, including an onboarding built entirely in app code with no SDK-rendered screen. The second is the [**Rocalytics client**](#rocalytics-client), for apps that report installs, purchases and onboarding progress to Rocalytics.
+Headless client SDK for Onboarding Studio. The first surface is the **onboarding run tracker**: a small, typed API that lets any onboarding report its progress in one versioned shape, including an onboarding built entirely in app code with no SDK-rendered screen. The second is the [**Rocalytics client**](#client), for apps that report installs, purchases and onboarding progress to Rocalytics.
 
-- **Headless.** No renderer, router or UI library. The package has no runtime dependency. The tracker (`/onboarding`, `/core`) has no peer dependency either; only `/rocalytics` uses optional peers, the Expo native modules it talks to.
+- **Headless.** No renderer, router or UI library. The package has no runtime dependency. The tracker (`/onboarding`, `/core`) has no peer dependency either; only `/client` uses optional peers, the Expo native modules it talks to.
 - **One payload contract.** Every send is a snapshot in the shape of the [onboarding run contract v1](docs/onboarding-run-contract.md) (`schema_version: 1`), with a [JSON Schema](docs/onboarding-run.schema.json) and [TypeScript types](docs/onboarding-run.types.ts). The contract is authoritative; this README only explains how the tracker applies it.
 - **Pluggable transport.** Snapshots go to a sink. The stock sink POSTs to an HTTP collector you configure.
 
@@ -20,25 +20,24 @@ The package is private. It is published to GitHub Packages, not the public npm r
    ```
 
 2. Set `GITHUB_TOKEN` to a GitHub token with the `read:packages` scope, locally and as a secret in CI and EAS builds. Never commit the token.
-3. `npm install @rocapine/studio-sdk`.
+3. `npm install @rocapine/rocalytics-sdk`.
 
 ## Subpaths
 
 | Import | What it is |
 |---|---|
-| `@rocapine/studio-sdk/onboarding` | The onboarding run tracker. Public API. |
-| `@rocapine/studio-sdk/core` | Shared building blocks: the sink interface, latest-snapshot delivery, id minting, run context, storage. Internal: exported for custom sinks and future surfaces, with no stability promise beyond what `/onboarding` re-exports. |
-| `@rocapine/studio-sdk/rocalytics` | The Rocalytics client, and a sink that delivers the tracker's runs to Rocalytics. Public API. Needs the Expo peers below. |
-| `@rocapine/studio-sdk/paywall` | Placeholder, not shipped. Reserved for a paywall surface. |
+| `@rocapine/rocalytics-sdk/onboarding` | The onboarding run tracker. Public API. |
+| `@rocapine/rocalytics-sdk/core` | Shared building blocks: the sink interface, latest-snapshot delivery, id minting, run context, storage. Internal: exported for custom sinks and future surfaces, with no stability promise beyond what `/onboarding` re-exports. |
+| `@rocapine/rocalytics-sdk/client` | The Rocalytics client, and a sink that delivers the tracker's runs to Rocalytics. Public API. Needs the Expo peers below. |
 
-Tracking never imports remote-control code, and `/onboarding` never imports `/rocalytics`: an app that only tracks onboarding installs and bundles no native module. Any later remote-control subpath will bring its heavier dependencies as optional peers in the same way.
+The package is for tracking only: it holds no remote-control code. `/onboarding` never imports `/client`, so an app that only tracks onboarding installs and bundles no native module.
 
 ## A hand-coded onboarding
 
 This file is [`examples/hand-coded-onboarding.ts`](examples/hand-coded-onboarding.ts), type-checked and run by the test suite:
 
 ```ts
-import { createHttpSink, onboardingRun, type KeyValueStorage, type OnboardingRun } from "@rocapine/studio-sdk/onboarding";
+import { createHttpSink, onboardingRun, type KeyValueStorage, type OnboardingRun } from "@rocapine/rocalytics-sdk/onboarding";
 
 // 1. Once, at app startup.
 export function setUpTracking(storage: KeyValueStorage, device: { appVersion: string; build: string; osVersion: string }) {
@@ -130,7 +129,7 @@ That run produces one payload per send. The completed one lists `welcome`, `goal
 | `sink` | required | Where snapshots go. `createHttpSink({ url, headers?, timeoutMs? })`, or your own `Sink`. Its `destination` decides what a reconfigure hands over and what stored state is sent (see [A custom sink](#a-custom-sink)). |
 | `context` | required | `{ appVersion, build, platform, osVersion, locale, timezone }`, or a function returning it. Read once per run, at start. There is no country field: the server derives it. |
 | `storage` | none | A key-value store shaped like AsyncStorage or `localStorage`. Without it, nothing survives a restart. If it cannot be read (after one retry), or holds a format this version does not know, it is left untouched and the session runs without persistence. |
-| `storageKey` | `studio-sdk:onboarding-run` | One restorable run per key. |
+| `storageKey` | `rocalytics-sdk:onboarding-run` | One restorable run per key. |
 | `debounceMs` | `500` | Changes within this window go out as one send. `complete()` and `background()` skip the debounce. |
 | `persistTimeoutMs` | `1000` | With `storage`, every snapshot (completion and background included) is written before it is sent, waiting at most this long for the write. |
 | `storageReadTimeoutMs` | `5000` | How long a storage read may take before it is reported (a `storage` diagnostic). It does not cut `resume()` short. It bounds `idle()`, which waits up to this long for the read and as long again for queued writes, so about twice this, and with it how long a tracker created after a `dispose()` on the same `storageKey` waits for the disposed one's writes. `start()` never waits for the read. |
@@ -206,7 +205,7 @@ After a reconfigure, `resume()` returns the run the disposed tracker on the same
 ### A custom sink
 
 ```ts
-import type { Sink, OnboardingRunSnapshot } from "@rocapine/studio-sdk/onboarding";
+import type { Sink, OnboardingRunSnapshot } from "@rocapine/rocalytics-sdk/onboarding";
 
 const sink: Sink<OnboardingRunSnapshot> = {
   destination: "https://collector.example.com/v1/onboarding-runs", // where it delivers; omit on a test double
@@ -254,11 +253,11 @@ Unlike the limits above, which come from the contract, these are the tracker's o
 
 ## Rocalytics client
 
-`@rocapine/studio-sdk/rocalytics` is the Rocalytics client that apps used to copy into their codebase as `rocalytics.client.ts`. It sends the same requests as the reference client: a test replays scenarios captured from the reference itself and compares every URL, header and body.
+`@rocapine/rocalytics-sdk/client` is the Rocalytics client that apps used to copy into their codebase as `rocalytics.client.ts`. It sends the same requests as the reference client: a test replays scenarios captured from the reference itself and compares every URL, header and body.
 
 ### Peer dependencies
 
-The client talks to these modules. They are optional peers, so an app that does not import `/rocalytics` needs none of them. An app that does must install all of them, which an Expo app usually already has, or gets with `npx expo install expo-application expo-crypto expo-device expo-network expo-secure-store`:
+The client talks to these modules. They are optional peers, so an app that does not import `/client` needs none of them. An app that does must install all of them, which an Expo app usually already has, or gets with `npx expo install expo-application expo-crypto expo-device expo-network expo-secure-store`:
 
 | Package | Range |
 |---|---|
@@ -278,11 +277,11 @@ An uninstalled peer is a different case. Metro resolves every `require` when it 
 
 ### Usage
 
-This file is [`examples/rocalytics-client.ts`](examples/rocalytics-client.ts), type-checked and run by the test suite:
+This file is [`examples/client.ts`](examples/client.ts), type-checked and run by the test suite:
 
 ```ts
-import { createRocalyticsOnboardingSink, getEventId, RocalyticsClient } from "@rocapine/studio-sdk/rocalytics";
-import { onboardingRun, type KeyValueStorage, type RunContextInput } from "@rocapine/studio-sdk/onboarding";
+import { createRocalyticsOnboardingSink, getEventId, RocalyticsClient } from "@rocapine/rocalytics-sdk/client";
+import { onboardingRun, type KeyValueStorage, type RunContextInput } from "@rocapine/rocalytics-sdk/onboarding";
 
 // 1. One client per app, created once at startup. It starts itself: it reads
 //    (or mints) the device's roca id, identifies the device, and sends
@@ -359,7 +358,7 @@ That endpoint answers success with a 2xx and no body, so a 2xx is accepted. Othe
 ### Migrating from a copied `rocalytics.client.ts`
 
 1. Install the package and the peers above, then delete the copied file.
-2. Import from `@rocapine/studio-sdk/rocalytics` instead. The class and type names are unchanged (`RocalyticsClient`, `TrackPurchaseParams`, `IdentifyParams`, `DemandScoreResult`, `OnboardingStepAnswers`, ...).
+2. Import from `@rocapine/rocalytics-sdk/client` instead. The class and type names are unchanged (`RocalyticsClient`, `TrackPurchaseParams`, `IdentifyParams`, `DemandScoreResult`, `OnboardingStepAnswers`, ...).
 3. Keep creating the client once, at startup.
 4. Check the rows below that apply to your copy.
 
@@ -369,13 +368,12 @@ That endpoint answers success with a 2xx and no body, so a 2xx is accepted. Othe
 | recorded the install under `rocadata-install-tracked-4` | Nothing to do. Either install key counts as "install sent", so no device sends `install` twice. |
 | imported the Expo modules at the top of the file | Nothing to do. The modules now load lazily, and a missing native module makes the client inert instead of crashing the launch. |
 | took `{ product, transaction }`, or `{ productId, redemptionResult }`, in `trackPurchase` | Both still work. `productId` defaults to `product.productIdentifier`. Product and transaction are typed as any object, so pass the purchase SDK's own types. |
-| passed `superwallEvent` to `trackPurchase`, or called `trackSuperwallEvent` | Neither is in the package: Superwall event tracking is not ported. |
 | called `getEventId(name, transactionId)` | Call `getEventId(name, { original_transaction_identifier: transactionId })`. It returns `undefined` when there is no transaction id. |
 | ran an app-specific step after start-up, such as handing the roca id to an attribution SDK | Do it in the app: `await rocalytics.ready`, then use `rocalytics.rocaId` when it is not null. |
 | logged requests or purchase properties to the console | The package logs neither. Start-up problems go to `onDiagnostic` (default `console.warn`; pass your own handler to route or silence them). A failed request still rejects. |
 | identified without `locale` at start-up | The start-up identify now sends the device locale, as the reference does. |
 | read `selectedVersion` or `versions` from `DemandScoreResult` as always present | Both are optional, so a response from before the score was versioned still fits. Check for them. |
-| mocked the copied module in Jest | Mock `@rocapine/studio-sdk/rocalytics` instead, or create the client with `modules` and `fetch` stand-ins. |
+| mocked the copied module in Jest | Mock `@rocapine/rocalytics-sdk/client` instead, or create the client with `modules` and `fetch` stand-ins. |
 
 ## Development
 

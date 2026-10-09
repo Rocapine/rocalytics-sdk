@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RocalyticsClient, loadExpoModules, type Diagnostic } from "../src/rocalytics";
-import { FakeSecureStore, IOS, ROCA_ID, fakeModules, recordingFetch, stubIntl } from "./rocalytics.fakes";
+import { RocalyticsClient, loadExpoModules, type Diagnostic } from "../src/client";
+import { FakeSecureStore, IOS, ROCA_ID, fakeModules, recordingFetch, stubIntl } from "./client.fakes";
 
 // The identity a device keeps across launches, the once-per-device install
 // event, and what the client does when it cannot run at all.

@@ -5,9 +5,9 @@ export default defineConfig({
   resolve: {
     // The example imports the package by name, as an app would.
     alias: {
-      "@rocapine/studio-sdk/onboarding": path.resolve(__dirname, "src/onboarding/index.ts"),
-      "@rocapine/studio-sdk/core": path.resolve(__dirname, "src/core/index.ts"),
-      "@rocapine/studio-sdk/rocalytics": path.resolve(__dirname, "src/rocalytics/index.ts"),
+      "@rocapine/rocalytics-sdk/onboarding": path.resolve(__dirname, "src/onboarding/index.ts"),
+      "@rocapine/rocalytics-sdk/core": path.resolve(__dirname, "src/core/index.ts"),
+      "@rocapine/rocalytics-sdk/client": path.resolve(__dirname, "src/client/index.ts"),
     },
   },
   test: {

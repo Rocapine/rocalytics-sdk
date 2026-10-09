@@ -1,4 +1,4 @@
-// @rocapine/studio-sdk/rocalytics: the Rocalytics client.
+// @rocapine/rocalytics-sdk/client: the Rocalytics client.
 //
 // Sends installs, purchases, identities, onboarding progress and custom events
 // to the Rocalytics API, and reads the demand score. The Expo native modules

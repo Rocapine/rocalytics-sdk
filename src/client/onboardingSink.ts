@@ -98,7 +98,7 @@ export function rocalyticsOutcome(status: number, body?: unknown): SinkResult {
 }
 
 /**
- * A sink for the onboarding run tracker (`@rocapine/studio-sdk/onboarding`)
+ * A sink for the onboarding run tracker (`@rocapine/rocalytics-sdk/onboarding`)
  * that delivers each snapshot to Rocalytics through `client`, as the pre-v1
  * onboarding payload (see `toOnboardingResponsePayload`).
  *

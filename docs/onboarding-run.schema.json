@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:studio-sdk:onboarding-run:1",
+  "$id": "urn:rocalytics-sdk:onboarding-run:1",
   "title": "Onboarding run snapshot, schema_version 1",
   "description": "One send of an onboarding run. Each send replaces the run's previous snapshot. Normative text: onboarding-run-contract.md. The schema is closed: an unknown field is an error.",
   "type": "object",

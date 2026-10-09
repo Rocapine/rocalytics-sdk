@@ -1,5 +1,5 @@
-import { createRocalyticsOnboardingSink, getEventId, RocalyticsClient } from "@rocapine/studio-sdk/rocalytics";
-import { onboardingRun, type KeyValueStorage, type RunContextInput } from "@rocapine/studio-sdk/onboarding";
+import { createRocalyticsOnboardingSink, getEventId, RocalyticsClient } from "@rocapine/rocalytics-sdk/client";
+import { onboardingRun, type KeyValueStorage, type RunContextInput } from "@rocapine/rocalytics-sdk/onboarding";
 
 // 1. One client per app, created once at startup. It starts itself: it reads
 //    (or mints) the device's roca id, identifies the device, and sends

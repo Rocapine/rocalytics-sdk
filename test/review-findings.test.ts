@@ -7,7 +7,7 @@ import { onboardingRun } from "../src/onboarding";
 import { ManualTime, MemorySink, flushMicrotasks } from "./fakes";
 import { CONTEXT, DESTINATION, IDENTITY, MANIFEST, freshProcess, harness } from "./harness";
 
-const KEY = "studio-sdk:onboarding-run";
+const KEY = "rocalytics-sdk:onboarding-run";
 
 describe("F1: a null Studio deployment id", () => {
   it("is treated as absent: the run is a draft, and the payload is schema-valid", async () => {

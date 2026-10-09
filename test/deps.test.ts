@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 // The package has no runtime dependency. The tracking core (/onboarding and
 // /core) has no dependency of any kind, not even a peer: no source file under
-// it imports anything but a relative path. /rocalytics talks to Expo native
+// it imports anything but a relative path. /client talks to Expo native
 // modules, so it declares them as OPTIONAL peers and loads them lazily, from
 // one file, with string-literal requires a bundler can see. `npm run
 // check:exports` repeats these checks on the built output, transitively.
@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 const ROOT = path.join(__dirname, "..");
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
 
-/** The only packages /rocalytics may load, all optional peers. */
+/** The only packages /client may load, all optional peers. */
 const ROCALYTICS_PEERS = [
   "expo-application",
   "expo-crypto",
@@ -41,7 +41,7 @@ describe("dependencies", () => {
     }
   });
 
-  it("its only peers are the /rocalytics native modules, every one of them optional", () => {
+  it("its only peers are the /client native modules, every one of them optional", () => {
     expect(Object.keys(pkg.peerDependencies ?? {}).sort()).toEqual(ROCALYTICS_PEERS);
     expect(Object.keys(pkg.peerDependenciesMeta ?? {}).sort()).toEqual(ROCALYTICS_PEERS);
     for (const name of ROCALYTICS_PEERS) expect(pkg.peerDependenciesMeta[name], name).toEqual({ optional: true });
@@ -62,21 +62,21 @@ describe("dependencies", () => {
     }
   });
 
-  it("/rocalytics imports only relative paths, and requires its peers from native.ts only", () => {
-    const files = listTs(path.join(ROOT, "src/rocalytics"));
+  it("/client imports only relative paths, and requires its peers from native.ts only", () => {
+    const files = listTs(path.join(ROOT, "src/client"));
     expect(files.length).toBeGreaterThan(3);
     const required: string[] = [];
     for (const f of files) {
       const rel = path.relative(ROOT, f);
       for (const spec of specifiers(f, IMPORT)) expect(isRelative(spec), `${rel} imports "${spec}"`).toBe(true);
       const reqs = specifiers(f, REQUIRE);
-      if (rel !== path.join("src", "rocalytics", "native.ts")) expect(reqs, rel).toEqual([]);
+      if (rel !== path.join("src", "client", "native.ts")) expect(reqs, rel).toEqual([]);
       required.push(...reqs);
     }
     expect([...new Set(required)].sort()).toEqual(ROCALYTICS_PEERS);
   });
 
-  it("the tracking module never imports from /rocalytics or a remote-control subpath", () => {
+  it("the tracking module never imports from /client or a remote-control subpath", () => {
     for (const f of [...listTs(path.join(ROOT, "src/onboarding")), ...listTs(path.join(ROOT, "src/core"))]) {
       const text = fs.readFileSync(f, "utf8");
       expect(text, f).not.toMatch(/from\s+["'][^"']*remote/);
@@ -84,13 +84,13 @@ describe("dependencies", () => {
     }
   });
 
-  it("exports exactly the shipped subpaths: /onboarding, /core and /rocalytics", () => {
-    expect(Object.keys(pkg.exports).sort()).toEqual(["./core", "./onboarding", "./package.json", "./rocalytics"]);
-    expect(Object.keys(pkg.typesVersions["*"]).sort()).toEqual(["core", "onboarding", "rocalytics"]);
-    expect(pkg.files).toContain("rocalytics");
-    expect(JSON.parse(fs.readFileSync(path.join(ROOT, "rocalytics/package.json"), "utf8"))).toEqual({
-      main: "../dist/rocalytics/index.js",
-      types: "../dist/rocalytics/index.d.ts",
+  it("exports exactly the shipped subpaths: /onboarding, /core and /client", () => {
+    expect(Object.keys(pkg.exports).sort()).toEqual(["./client", "./core", "./onboarding", "./package.json"]);
+    expect(Object.keys(pkg.typesVersions["*"]).sort()).toEqual(["client", "core", "onboarding"]);
+    expect(pkg.files).toContain("client");
+    expect(JSON.parse(fs.readFileSync(path.join(ROOT, "client/package.json"), "utf8"))).toEqual({
+      main: "../dist/client/index.js",
+      types: "../dist/client/index.d.ts",
     });
   });
 

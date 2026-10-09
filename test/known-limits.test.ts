@@ -1,4 +1,4 @@
-// Items 1 to 5 of studio-sdk#5. Items 1, 2 and 5 are fixed, and item 3 on a
+// Items 1 to 5 of rocalytics-sdk#5. Items 1, 2 and 5 are fixed, and item 3 on a
 // reconfigure; the tests marked "fixed" pin the fix. What is still a limit (item
 // 4, and item 3 when the app is killed without storage) is stated in the
 // README's "Known limits of the tracker" section and pinned here, so a change
@@ -15,7 +15,7 @@ import { IDENTITY, MANIFEST, freshProcess, harness } from "./harness";
 // Recording 500 entries one tick at a time takes seconds, past Vitest's 5 s default under load.
 const SLOW_MS = 20_000;
 
-const KEY = "studio-sdk:onboarding-run";
+const KEY = "rocalytics-sdk:onboarding-run";
 const readme = fs.readFileSync(path.join(__dirname, "..", "README.md"), "utf8");
 
 describe("the README's known limits of the tracker", () => {

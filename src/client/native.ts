@@ -16,7 +16,7 @@
 // missing.
 //
 // Every require is a string literal, so a bundler can see it. Metro resolves
-// them at bundle time: an app that imports /rocalytics without installing a
+// them at bundle time: an app that imports /client without installing a
 // peer fails to bundle, rather than going inert at run time.
 
 declare const require: (id: string) => unknown;
