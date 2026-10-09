@@ -11,10 +11,10 @@ describe("package identity", () => {
     expect(pkg.repository.url).toBe("https://github.com/Rocapine/rocalytics-sdk.git");
   });
 
-  it("ships /onboarding, /core and /client, and no /rocalytics", () => {
+  it("ships /onboarding, /core, /client and /paywall, and no /rocalytics", () => {
     const subpaths = Object.keys(pkg.exports).filter((k) => k !== "./package.json").sort();
-    expect(subpaths).toEqual(["./client", "./core", "./onboarding"]);
-    expect(Object.keys(pkg.typesVersions["*"]).sort()).toEqual(["client", "core", "onboarding"]);
+    expect(subpaths).toEqual(["./client", "./core", "./onboarding", "./paywall"]);
+    expect(Object.keys(pkg.typesVersions["*"]).sort()).toEqual(["client", "core", "onboarding", "paywall"]);
     expect(fs.existsSync(path.join(ROOT, "client", "package.json"))).toBe(true);
     expect(fs.existsSync(path.join(ROOT, "rocalytics"))).toBe(false);
     expect(fs.existsSync(path.join(ROOT, "src", "rocalytics"))).toBe(false);

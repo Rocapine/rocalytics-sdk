@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:rocalytics-sdk:paywall-presentation:1",
+  "title": "Paywall presentation snapshot, schema_version 1",
+  "description": "One send of a paywall presentation. Each send replaces the presentation's previous snapshot. Normative text: paywall-presentation-contract.md. The schema is closed: an unknown field is an error.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "presentation_id",
+    "seq",
+    "status",
+    "started_at",
+    "shown_at",
+    "ended_at",
+    "sent_at",
+    "paywall",
+    "surface",
+    "outcome",
+    "context"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "presentation_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "enum": [
+        "in_progress",
+        "ended"
+      ]
+    },
+    "started_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "shown_at": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ended_at": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sent_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "paywall": {
+      "type": "object",
+      "required": [
+        "moment_key",
+        "paywall_id",
+        "audience_id",
+        "render_mode",
+        "billing"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "moment_key": {
+          "$ref": "#/$defs/id"
+        },
+        "paywall_id": {
+          "$ref": "#/$defs/id"
+        },
+        "audience_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "render_mode": {
+          "enum": [
+            "elements",
+            "custom"
+          ]
+        },
+        "billing": {
+          "enum": [
+            "store",
+            "stripe"
+          ]
+        },
+        "variant_key": {
+          "$ref": "#/$defs/id"
+        },
+        "deployment_id": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "surface": {
+      "enum": [
+        "present",
+        "paywall_step"
+      ]
+    },
+    "onboarding_run": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "step_key"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "step_key": {
+          "$ref": "#/$defs/key"
+        }
+      }
+    },
+    "outcome": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "status"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "enum": [
+                "purchased",
+                "dismissed",
+                "cancelled",
+                "error"
+              ]
+            },
+            "reason": {
+              "$ref": "#/$defs/key"
+            },
+            "transaction": {
+              "type": "object",
+              "required": [],
+              "additionalProperties": false,
+              "properties": {
+                "original_transaction_identifier": {
+                  "$ref": "#/$defs/storeId"
+                },
+                "purchase_token": {
+                  "$ref": "#/$defs/storeId"
+                },
+                "product_id": {
+                  "$ref": "#/$defs/storeId"
+                },
+                "restored": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "context": {
+      "description": "Captured once, when the run starts. Country is not sent: the server derives it.",
+      "type": "object",
+      "required": [
+        "app_version",
+        "build",
+        "platform",
+        "os_version",
+        "locale",
+        "timezone"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "app_version": {
+          "$ref": "#/$defs/shortText"
+        },
+        "build": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/shortText"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "platform": {
+          "enum": [
+            "ios",
+            "android",
+            "web"
+          ]
+        },
+        "os_version": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/shortText"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "locale": {
+          "description": "BCP 47 language tag.",
+          "type": "string",
+          "pattern": "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
+        },
+        "timezone": {
+          "description": "IANA time zone name.",
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$",
+          "maxLength": 64
+        },
+        "library_version": {
+          "$ref": "#/$defs/shortText"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "description": "RFC 3339 in UTC with exactly three fractional digits and a Z suffix, e.g. 2026-01-10T09:00:00.000Z. A pattern rather than format: date-time, because format is annotation-only in draft 2020-12.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "key": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "shortText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "storeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    }
+  }
+}

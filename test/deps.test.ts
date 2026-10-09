@@ -54,7 +54,7 @@ describe("dependencies", () => {
   });
 
   it("/onboarding and /core import nothing but relative paths, and require nothing", () => {
-    const files = [...listTs(path.join(ROOT, "src/onboarding")), ...listTs(path.join(ROOT, "src/core")), path.join(ROOT, "src/version.ts")];
+    const files = [...listTs(path.join(ROOT, "src/onboarding")), ...listTs(path.join(ROOT, "src/core")), ...listTs(path.join(ROOT, "src/paywall")), path.join(ROOT, "src/version.ts")];
     expect(files.length).toBeGreaterThan(5);
     for (const f of files) {
       for (const spec of specifiers(f, IMPORT)) expect(isRelative(spec), `${path.relative(ROOT, f)} imports "${spec}"`).toBe(true);
@@ -77,21 +77,23 @@ describe("dependencies", () => {
   });
 
   it("the tracking module never imports from /client or a remote-control subpath", () => {
-    for (const f of [...listTs(path.join(ROOT, "src/onboarding")), ...listTs(path.join(ROOT, "src/core"))]) {
+    for (const f of [...listTs(path.join(ROOT, "src/onboarding")), ...listTs(path.join(ROOT, "src/core")), ...listTs(path.join(ROOT, "src/paywall"))]) {
       const text = fs.readFileSync(f, "utf8");
       expect(text, f).not.toMatch(/from\s+["'][^"']*remote/);
       expect(text, f).not.toMatch(/from\s+["'][^"']*rocalytics/);
     }
   });
 
-  it("exports exactly the shipped subpaths: /onboarding, /core and /client", () => {
-    expect(Object.keys(pkg.exports).sort()).toEqual(["./client", "./core", "./onboarding", "./package.json"]);
-    expect(Object.keys(pkg.typesVersions["*"]).sort()).toEqual(["client", "core", "onboarding"]);
-    expect(pkg.files).toContain("client");
-    expect(JSON.parse(fs.readFileSync(path.join(ROOT, "client/package.json"), "utf8"))).toEqual({
-      main: "../dist/client/index.js",
-      types: "../dist/client/index.d.ts",
-    });
+  it("exports exactly the shipped subpaths: /onboarding, /core, /client and /paywall", () => {
+    expect(Object.keys(pkg.exports).sort()).toEqual(["./client", "./core", "./onboarding", "./package.json", "./paywall"]);
+    expect(Object.keys(pkg.typesVersions["*"]).sort()).toEqual(["client", "core", "onboarding", "paywall"]);
+    expect(pkg.files).toEqual(expect.arrayContaining(["client", "paywall"]));
+    for (const sub of ["client", "paywall"]) {
+      expect(JSON.parse(fs.readFileSync(path.join(ROOT, `${sub}/package.json`), "utf8"))).toEqual({
+        main: `../dist/${sub}/index.js`,
+        types: `../dist/${sub}/index.d.ts`,
+      });
+    }
   });
 
   it("packing (npm pack / npm publish) builds dist first, so a clean checkout cannot ship without it", () => {

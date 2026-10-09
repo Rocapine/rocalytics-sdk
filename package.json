@@ -30,6 +30,10 @@
       "types": "./dist/client/index.d.ts",
       "default": "./dist/client/index.js"
     },
+    "./paywall": {
+      "types": "./dist/paywall/index.d.ts",
+      "default": "./dist/paywall/index.js"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -42,6 +46,9 @@
       ],
       "client": [
         "./dist/client/index.d.ts"
+      ],
+      "paywall": [
+        "./dist/paywall/index.d.ts"
       ]
     }
   },
@@ -52,6 +59,7 @@
     "onboarding",
     "core",
     "client",
+    "paywall",
     "README.md",
     "CHANGELOG.md"
   ],
@@ -67,7 +75,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "gen:schema-types": "UPDATE_SCHEMA_TYPES=1 vitest run test/schema-types.test.ts",
+    "gen:schema-types": "UPDATE_SCHEMA_TYPES=1 vitest run test/schema-types.test.ts test/paywall-schema-types.test.ts",
     "check:exports": "node scripts/check-exports.mjs"
   },
   "peerDependencies": {

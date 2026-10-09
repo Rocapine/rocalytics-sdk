@@ -27,12 +27,16 @@ check(typeof core.createDelivery === "function", "@rocapine/rocalytics-sdk/core 
 const rocalytics = require("@rocapine/rocalytics-sdk/client");
 check(typeof rocalytics.RocalyticsClient === "function", "@rocapine/rocalytics-sdk/client exports RocalyticsClient");
 check(typeof rocalytics.createRocalyticsOnboardingSink === "function", "@rocapine/rocalytics-sdk/client exports createRocalyticsOnboardingSink");
+check(typeof rocalytics.createRocalyticsPaywallSink === "function", "@rocapine/rocalytics-sdk/client exports createRocalyticsPaywallSink");
 
 check(require(path.join(root, "onboarding")).onboardingRun === onboarding.onboardingRun, "onboarding/ stub folder resolves to the same module");
 check(typeof require(path.join(root, "core")).uuidv7 === "function", "core/ stub folder resolves");
 check(require(path.join(root, "client")).RocalyticsClient === rocalytics.RocalyticsClient, "client/ stub folder resolves to the same module");
+const paywall = require("@rocapine/rocalytics-sdk/paywall");
+check(typeof paywall.createPaywallTracker === "function", "@rocapine/rocalytics-sdk/paywall exports createPaywallTracker");
+check(require(path.join(root, "paywall")).createPaywallTracker === paywall.createPaywallTracker, "paywall/ stub folder resolves to the same module");
 
-for (const sub of ["onboarding", "core", "client"]) {
+for (const sub of ["onboarding", "core", "client", "paywall"]) {
   check(fs.existsSync(path.join(root, "dist", sub, "index.d.ts")), `dist/${sub}/index.d.ts exists`);
 }
 
@@ -47,7 +51,7 @@ const resolveJs = (from, spec) => {
   throw new Error(`${path.relative(root, from)}: cannot resolve ${spec}`);
 };
 
-for (const sub of ["onboarding", "core"]) {
+for (const sub of ["onboarding", "core", "paywall"]) {
   const seen = new Set();
   const external = [];
   const stack = [path.join(root, "dist", sub, "index.js")];

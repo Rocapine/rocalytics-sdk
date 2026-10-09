@@ -2,12 +2,15 @@ import { safeDiagnostics, type DiagnosticHandler } from "../core/diagnostics";
 import type { SinkResult } from "../core/sink";
 import { systemClock, type Clock } from "../core/time";
 import type { OnboardingRunSnapshot } from "../onboarding/contract";
+import type { PaywallPresentationSnapshot } from "../paywall/contract";
+import { paywallIngestOutcome } from "./paywallSink";
 import { loadExpoModules, type RocalyticsModules } from "./native";
 import { rocalyticsOutcome, toOnboardingResponsePayload } from "./onboardingSink";
 import {
   buildDemandScoreRequest,
   buildIdentifyRequest,
   buildOnboardingResponseRequest,
+  buildPaywallPresentationRequest,
   buildTrackRequest,
   ROCALYTICS_API_BASE,
   sendRocalyticsRequest,
@@ -103,6 +106,28 @@ export class RocalyticsClient {
   get onboardingRunDestination(): string {
     const url = `${this.options.baseUrl ?? ROCALYTICS_API_BASE}/functions/v1/onboarding-response`;
     return this.options.fetch ? `${url} (custom fetch)` : url;
+  }
+
+  /** Where `sendPaywallPresentation` delivers, marked ` (custom fetch)` like `onboardingRunDestination`. */
+  get paywallPresentationDestination(): string {
+    const url = `${this.options.baseUrl ?? ROCALYTICS_API_BASE}/functions/v1/paywall-presentations`;
+    return this.options.fetch ? `${url} (custom fetch)` : url;
+  }
+
+  /** Sends one paywall presentation snapshot. The send of `createRocalyticsPaywallSink`; it never throws. */
+  async sendPaywallPresentation(snapshot: PaywallPresentationSnapshot): Promise<SinkResult> {
+    await this.ready;
+    if (!this.rocaId) return { outcome: "transient", reason: "the Rocalytics client is inert" };
+    const fetch = this.fetchFn();
+    if (!fetch) return { outcome: "transient", reason: "no fetch available" };
+    try {
+      const request = buildPaywallPresentationRequest(this.context(), snapshot);
+      const response = await fetch(request.url, request.init);
+      const body = await response.json().catch(() => undefined);
+      return paywallIngestOutcome(response.status, body);
+    } catch (error) {
+      return { outcome: "transient", reason: String(error) };
+    }
   }
 
   /** Sends a named analytics event. */

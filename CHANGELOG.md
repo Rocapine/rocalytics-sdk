@@ -13,7 +13,11 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
 - Renamed to `@rocapine/rocalytics-sdk`; `/rocalytics` is now `/client`. Never published under the old name.
 
 ### Added
-
+- `@rocapine/rocalytics-sdk/paywall`: the paywall presentation tracker, `createPaywallTracker`. Pass it to the paywall host as `observer`.
+  - One presentation is up to three snapshots (start, shown, end) in the shape of the paywall presentation contract v1 (`docs/paywall-presentation-contract.md`, with its JSON Schema and types).
+  - Each presentation is delivered on its own, so a new presentation never supersedes an earlier one's unsent end. Unsent snapshots are stored, at most 20, and resent on the next launch.
+  - Never throws: invalid input, a failing context or a failing sink is reported through `onDiagnostic`.
+- `@rocapine/rocalytics-sdk/client`: `createRocalyticsPaywallSink`, delivering presentations to `/paywall-presentations`, with `paywallIngestOutcome` and `buildPaywallPresentationRequest`.
 - `@rocapine/rocalytics-sdk/client`: the Rocalytics client, `RocalyticsClient`, replacing the `rocalytics.client.ts` file apps copied.
   - Its requests equal the reference client's. A test replays scenarios captured from the reference and compares every URL, header and body.
   - API: `ready`, `rocaId`, `track`, `trackEvent`, `trackPurchase`, `identify`, `trackOnboarding`, `trackCustomEvent` (with `dedupSuffix`) and `getDemandScore`.
