@@ -34,7 +34,7 @@ export interface TrackerConfig {
    * disposed in this process on the same `storageKey` handed it a run.
    */
   storage?: KeyValueStorage;
-  /** Storage key. Default `studio-sdk:onboarding-run`. One restorable run per key. */
+  /** Storage key. Default `rocalytics-sdk:onboarding-run`. One restorable run per key. */
   storageKey?: string;
   clock?: Clock;
   timers?: Timers;
@@ -210,7 +210,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
   let persistenceOff = false;
   // The slow read was reported (once).
   let readSlow = false;
-  const storageKey = config.storageKey ?? "studio-sdk:onboarding-run";
+  const storageKey = config.storageKey ?? "rocalytics-sdk:onboarding-run";
   const store: SerialStore<unknown> | null = config.storage
     ? createSerialStore<unknown>(config.storage, storageKey, (e) =>
         report({ code: "storage", message: `storage failed: ${String(e)}` }),

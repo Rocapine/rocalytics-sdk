@@ -1,4 +1,4 @@
-// @rocapine/studio-sdk/core: shared building blocks for the surface subpaths.
+// @rocapine/rocalytics-sdk/core: shared building blocks for the surface subpaths.
 // Internal: exported so a custom sink or another surface can use it, with no
 // stability promise beyond what /onboarding re-exports.
 

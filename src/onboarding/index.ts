@@ -1,4 +1,4 @@
-// @rocapine/studio-sdk/onboarding: the onboarding run tracker.
+// @rocapine/rocalytics-sdk/onboarding: the onboarding run tracker.
 //
 // Reports one run of an onboarding as snapshots in the shape of the onboarding
 // run contract v1 (docs/onboarding-run-contract.md). Headless: no renderer,

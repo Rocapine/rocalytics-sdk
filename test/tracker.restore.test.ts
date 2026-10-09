@@ -219,7 +219,7 @@ describe("resume after relaunch (3.2)", () => {
     const none = harness({ storage: undefined });
     expect(await none.tracker.resume()).toBeNull();
     const corrupt = memoryStorage();
-    corrupt.setItem("studio-sdk:onboarding-run", "{not json");
+    corrupt.setItem("rocalytics-sdk:onboarding-run", "{not json");
     const h = harness({ storage: corrupt });
     expect(await h.tracker.resume()).toBeNull();
     expect(h.diagnostics.map((d) => d.code)).toContain("storage");

@@ -1,9 +1,9 @@
 // Smoke check of the BUILT package (run after `npm run build`):
 //  1. the subpaths resolve by package name through the `exports` map, as an app would import them;
-//  2. they also resolve through the legacy `onboarding/`, `core/` and `rocalytics/` stub folders, for resolvers without `exports`;
+//  2. they also resolve through the legacy `onboarding/`, `core/` and `client/` stub folders, for resolvers without `exports`;
 //  3. everything /onboarding and /core load, transitively, is the package's own files, with no package
-//     required and no /rocalytics file reached: an app that only tracks onboarding bundles no native module;
-//  4. the only packages the built output requires are /rocalytics's optional peers, all from one file;
+//     required and no /client file reached: an app that only tracks onboarding bundles no native module;
+//  4. the only packages the built output requires are /client's optional peers, all from one file;
 //  5. under plain Node, where none of those peers exist, the built client starts inert and does not throw.
 import { createRequire } from "node:module";
 import fs from "node:fs";
@@ -18,21 +18,21 @@ const check = (ok, message) => {
   console.log(`${ok ? "ok  " : "FAIL"} ${message}`);
 };
 
-const onboarding = require("@rocapine/studio-sdk/onboarding");
-check(typeof onboarding.onboardingRun?.start === "function", "@rocapine/studio-sdk/onboarding exports onboardingRun.start");
-check(typeof onboarding.createOnboardingRunTracker === "function", "@rocapine/studio-sdk/onboarding exports createOnboardingRunTracker");
-check(typeof onboarding.createHttpSink === "function", "@rocapine/studio-sdk/onboarding exports createHttpSink");
-const core = require("@rocapine/studio-sdk/core");
-check(typeof core.createDelivery === "function", "@rocapine/studio-sdk/core exports createDelivery");
-const rocalytics = require("@rocapine/studio-sdk/rocalytics");
-check(typeof rocalytics.RocalyticsClient === "function", "@rocapine/studio-sdk/rocalytics exports RocalyticsClient");
-check(typeof rocalytics.createRocalyticsOnboardingSink === "function", "@rocapine/studio-sdk/rocalytics exports createRocalyticsOnboardingSink");
+const onboarding = require("@rocapine/rocalytics-sdk/onboarding");
+check(typeof onboarding.onboardingRun?.start === "function", "@rocapine/rocalytics-sdk/onboarding exports onboardingRun.start");
+check(typeof onboarding.createOnboardingRunTracker === "function", "@rocapine/rocalytics-sdk/onboarding exports createOnboardingRunTracker");
+check(typeof onboarding.createHttpSink === "function", "@rocapine/rocalytics-sdk/onboarding exports createHttpSink");
+const core = require("@rocapine/rocalytics-sdk/core");
+check(typeof core.createDelivery === "function", "@rocapine/rocalytics-sdk/core exports createDelivery");
+const rocalytics = require("@rocapine/rocalytics-sdk/client");
+check(typeof rocalytics.RocalyticsClient === "function", "@rocapine/rocalytics-sdk/client exports RocalyticsClient");
+check(typeof rocalytics.createRocalyticsOnboardingSink === "function", "@rocapine/rocalytics-sdk/client exports createRocalyticsOnboardingSink");
 
 check(require(path.join(root, "onboarding")).onboardingRun === onboarding.onboardingRun, "onboarding/ stub folder resolves to the same module");
 check(typeof require(path.join(root, "core")).uuidv7 === "function", "core/ stub folder resolves");
-check(require(path.join(root, "rocalytics")).RocalyticsClient === rocalytics.RocalyticsClient, "rocalytics/ stub folder resolves to the same module");
+check(require(path.join(root, "client")).RocalyticsClient === rocalytics.RocalyticsClient, "client/ stub folder resolves to the same module");
 
-for (const sub of ["onboarding", "core", "rocalytics"]) {
+for (const sub of ["onboarding", "core", "client"]) {
   check(fs.existsSync(path.join(root, "dist", sub, "index.d.ts")), `dist/${sub}/index.d.ts exists`);
 }
 
@@ -62,7 +62,7 @@ for (const sub of ["onboarding", "core"]) {
   }
   const reached = [...seen].map((f) => path.relative(path.join(root, "dist"), f));
   check(external.length === 0, `/${sub} transitively requires no package${external.length ? `: ${external.join(", ")}` : ""} (${reached.length} files)`);
-  check(!reached.some((f) => f.startsWith(`rocalytics${path.sep}`)), `/${sub} never reaches a dist/rocalytics file`);
+  check(!reached.some((f) => f.startsWith(`rocalytics${path.sep}`)), `/${sub} never reaches a dist/client file`);
 }
 
 const PEERS = Object.keys(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).peerDependencies ?? {}).sort();
@@ -79,7 +79,7 @@ for (const file of listJs(path.join(root, "dist"))) {
 }
 const files = [...external.keys()];
 const required = [...new Set([...external.values()].flat())].sort();
-check(files.length === 1 && files[0] === path.join("dist", "rocalytics", "native.js"), `only dist/rocalytics/native.js requires a package (found: ${files.join(", ") || "none"})`);
+check(files.length === 1 && files[0] === path.join("dist", "client", "native.js"), `only dist/client/native.js requires a package (found: ${files.join(", ") || "none"})`);
 check(JSON.stringify(required) === JSON.stringify(PEERS), `it requires exactly the optional peers (${required.join(", ")})`);
 
 const diagnostics = [];

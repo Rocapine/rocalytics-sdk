@@ -1,4 +1,4 @@
-import { createHttpSink, onboardingRun, type KeyValueStorage, type OnboardingRun } from "@rocapine/studio-sdk/onboarding";
+import { createHttpSink, onboardingRun, type KeyValueStorage, type OnboardingRun } from "@rocapine/rocalytics-sdk/onboarding";
 
 // 1. Once, at app startup.
 export function setUpTracking(storage: KeyValueStorage, device: { appVersion: string; build: string; osVersion: string }) {

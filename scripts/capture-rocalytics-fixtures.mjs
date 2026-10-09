@@ -1,4 +1,4 @@
-// Captures the wire fixtures that test/rocalytics.reference.test.ts replays
+// Captures the wire fixtures that test/client.reference.test.ts replays
 // against the packaged client. The requests come from running the REFERENCE
 // client itself, not from this package, so "the port sends what the reference
 // sends" is checked against something the port did not produce.
@@ -21,7 +21,7 @@ import path from "node:path";
 import { URL, fileURLToPath, pathToFileURL } from "node:url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const out = path.join(root, "test/fixtures/rocalytics-reference.json");
+const out = path.join(root, "test/fixtures/client-reference.json");
 
 const args = Object.fromEntries(
   process.argv.slice(2).reduce((pairs, a, i, all) => (a.startsWith("--") ? [...pairs, [a.slice(2), all[i + 1]]] : pairs), []),

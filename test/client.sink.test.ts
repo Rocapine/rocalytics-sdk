@@ -7,11 +7,11 @@ import {
   toOnboardingResponsePayload,
   type FetchLike,
   type OnboardingResponsePayload,
-} from "../src/rocalytics";
+} from "../src/client";
 import { assertConformant } from "./contract";
 import { ManualTime } from "./fakes";
 import { CONTEXT } from "./harness";
-import { FakeSecureStore, IOS, ROCA_ID, fakeModules, stubIntl } from "./rocalytics.fakes";
+import { FakeSecureStore, IOS, ROCA_ID, fakeModules, stubIntl } from "./client.fakes";
 
 // The run tracker's snapshots, delivered to Rocalytics. The ingest only reads
 // the pre-v1 onboarding payload, so the sink maps each v1 snapshot onto it

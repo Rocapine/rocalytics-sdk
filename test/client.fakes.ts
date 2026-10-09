@@ -1,7 +1,7 @@
 // Stand-ins for the Expo modules, react-native and fetch, for the Rocalytics
 // client tests. The device shape is the one the fixture capture script uses,
 // so a captured scenario can be replayed against the packaged client as is.
-import type { FetchLike, RocalyticsModules } from "../src/rocalytics";
+import type { FetchLike, RocalyticsModules } from "../src/client";
 
 export interface FakeDevice {
   platform: "ios" | "android";

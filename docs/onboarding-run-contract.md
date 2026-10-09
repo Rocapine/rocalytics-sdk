@@ -1001,10 +1001,10 @@ Two kinds of pre-v1 row are excluded from funnels:
 
 ## 10. Reference tracker
 
-The reference implementation is the headless package `@rocapine/studio-sdk`. Apps import the tracker from its `/onboarding` subpath:
+The reference implementation is the headless package `@rocapine/rocalytics-sdk`. Apps import the tracker from its `/onboarding` subpath:
 
 ```ts
-import { onboardingRun } from "@rocapine/studio-sdk/onboarding";
+import { onboardingRun } from "@rocapine/rocalytics-sdk/onboarding";
 ```
 
 - **Zero-dependency core.** It needs nothing beyond `react`. The clock, the id generator and the run context are injected, so the core has no platform dependency and tests can supply fixed values.

@@ -4,12 +4,12 @@
 // production one because both trackers used the same storageKey.
 import { describe, expect, it } from "vitest";
 import { createHttpSink, memoryStorage } from "../src/core";
-import { RocalyticsClient, createRocalyticsOnboardingSink } from "../src/rocalytics";
+import { RocalyticsClient, createRocalyticsOnboardingSink } from "../src/client";
 import type { OnboardingRunSnapshot } from "../src/onboarding";
 import { ManualTime, MemorySink } from "./fakes";
 import { IDENTITY, MANIFEST, freshProcess, harness } from "./harness";
 
-const KEY = "studio-sdk:onboarding-run";
+const KEY = "rocalytics-sdk:onboarding-run";
 const STAGING = "https://staging.example.com/v1/onboarding-runs";
 const PRODUCTION = "https://collector.example.com/v1/onboarding-runs";
 

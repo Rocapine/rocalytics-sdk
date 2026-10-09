@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RocalyticsClient } from "../src/rocalytics";
-import fixture from "./fixtures/rocalytics-reference.json";
-import { FakeSecureStore, fakeModules, recordingFetch, stubIntl, type FakeDevice } from "./rocalytics.fakes";
+import { RocalyticsClient } from "../src/client";
+import fixture from "./fixtures/client-reference.json";
+import { FakeSecureStore, fakeModules, recordingFetch, stubIntl, type FakeDevice } from "./client.fakes";
 
 // Every request below was produced by the REFERENCE client, run by
 // scripts/capture-rocalytics-fixtures.mjs under fake Expo modules. Replaying

@@ -14,7 +14,7 @@ export type DiagnosticHandler = (diagnostic: Diagnostic) => void;
 /** The default handler: a console warning, when a console exists. */
 export const consoleDiagnostics: DiagnosticHandler = (d) => {
   const c = (globalThis as { console?: { warn?: (...a: unknown[]) => void } }).console;
-  c?.warn?.(`[studio-sdk] ${d.code}: ${d.message}`);
+  c?.warn?.(`[rocalytics-sdk] ${d.code}: ${d.message}`);
 };
 
 /** Wraps a host handler so that a handler which throws cannot break the caller. */

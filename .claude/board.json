@@ -1,11 +1,11 @@
 {
   "$comment": [
-    "Chart for Rocapine/studio-sdk on project #5 (Onboarding Studio v2 — Analytics, Users & Control).",
+    "Chart for Rocapine/rocalytics-sdk on project #5 (Onboarding Studio v2 — Analytics, Users & Control).",
     "Project #5 spans several repos; onboarding-studio/.claude/board.json is the master chart for it.",
-    "This chart scopes the board to THIS repo only: select/route read issues from Rocapine/studio-sdk.",
+    "This chart scopes the board to THIS repo only: select/route read issues from Rocapine/rocalytics-sdk.",
     "Board IDs below are copied from the master chart and verified against `gh project field-list 5` on 2026-10-05."
   ],
-  "name": "studio-sdk",
+  "name": "rocalytics-sdk",
   "board": {
     "org": "Rocapine",
     "projectNumber": 5,
@@ -29,11 +29,11 @@
     "machineOwnedNote": "`Priority` (and `Effort`) on this project is a projection of an org-level ISSUE field and has no options of its own — it cannot be written here at all. Leave it alone; write it with setIssueFieldValue (see `file.priority`). Sub-issue linking auto-adds the child to the project, so a following addProjectV2ItemById fails with \"Content already exists in this project\": treat that as success and look the item up via node(id:).projectItems."
   },
   "repos": [
-    "Rocapine/studio-sdk"
+    "Rocapine/rocalytics-sdk"
   ],
   "select": {
     "mode": "agent",
-    "rules": "1. Open issues in Rocapine/studio-sdk only. 2. Status is `Prioritized` (the ready status); skip Idea/Refining/Specced (need a decision first), In progress, Shipped, Dropped. 3. Not blocked by another open issue. 4. Not a Feature with open sub-issues — pick a sub-issue. 5. Read Layer from the project (it is a field, not a label); a ticket with no Layer is skipped and reported as `no Layer set`."
+    "rules": "1. Open issues in Rocapine/rocalytics-sdk only. 2. Status is `Prioritized` (the ready status); skip Idea/Refining/Specced (need a decision first), In progress, Shipped, Dropped. 3. Not blocked by another open issue. 4. Not a Feature with open sub-issues — pick a sub-issue. 5. Read Layer from the project (it is a field, not a label); a ticket with no Layer is skipped and reported as `no Layer set`."
   },
   "route": {
     "by": "layer",
@@ -43,7 +43,7 @@
       "Docs": "worktree-feature-dev"
     },
     "default": "worktree-feature-dev",
-    "note": "Only SDK, Infra/CI and Docs belong in this repo. Studio Frontend / Edge Functions / Database / MCP on a studio-sdk issue is mislabelled: skip and report."
+    "note": "Only SDK, Infra/CI and Docs belong in this repo. Studio Frontend / Edge Functions / Database / MCP on a rocalytics-sdk issue is mislabelled: skip and report."
   },
   "build": {
     "baseBranch": "main",
@@ -63,7 +63,7 @@
       },
       {
         "key": "public-api",
-        "instruction": "This is a published package (@rocapine/studio-sdk with subpath exports). Flag breaking changes to exported types/functions or package.json exports without a CHANGELOG entry and version bump."
+        "instruction": "This is a published package (@rocapine/rocalytics-sdk with subpath exports). Flag breaking changes to exported types/functions or package.json exports without a CHANGELOG entry and version bump."
       },
       {
         "key": "repo-rules",
@@ -154,6 +154,6 @@
     "requiredSections": [
       "Definition of done"
     ],
-    "decomposition": "Native GitHub sub-issues + Blocked-by edges. Features live in Rocapine/onboarding-studio; studio-sdk issues are technical Task sub-issues of them."
+    "decomposition": "Native GitHub sub-issues + Blocked-by edges. Features live in Rocapine/onboarding-studio; rocalytics-sdk issues are technical Task sub-issues of them."
   }
 }
