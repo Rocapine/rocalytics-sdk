@@ -98,6 +98,8 @@ export function markEnded(s: PresentationState, end: PaywallPresentationEnd, now
     if (t) outcome.transaction = t;
   }
   s.endedAt = Math.max(nowMs, floor(s));
+  // A purchase implies the paywall was on screen (P7): the contract requires shown_at with purchased.
+  if (end.status === "purchased" && s.shownAt === null) s.shownAt = s.endedAt;
   s.outcome = outcome;
   return "ok";
 }

@@ -14,4 +14,9 @@ describe("README: paywall", () => {
   it("embeds examples/native-paywall.ts verbatim", () => {
     expect(readme).toContain(example.trim());
   });
+
+  it("the example takes platform and locale from the device, never hard-coded", () => {
+    expect(example).not.toMatch(/platform: "(ios|android)",/);
+    expect(example).not.toMatch(/locale: "[a-z]{2}-[A-Z]{2}",/);
+  });
 });

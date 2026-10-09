@@ -54,11 +54,25 @@ export function createPaywallTracker(config: PaywallTrackerConfig): PaywallTrack
   const pending = new Map<string, Outbound<PaywallPresentationSnapshot>>();
   const deliveries = new Map<string, Delivery<PaywallPresentationSnapshot>>();
   let disposed = false;
-  // Writes wait for the first load, so a start() at launch cannot overwrite the stored map.
-  const loaded: Promise<Stored | null> = store ? store.load().catch(() => null) : Promise.resolve(null);
+  // Off when the first read failed: stored state is then left untouched, never overwritten.
+  let persistenceOff = false;
+  // Writes wait for the first read, so a start() at launch cannot overwrite the stored map.
+  const loaded: Promise<Stored | null> = store
+    ? store
+        .read()
+        .then((r) => {
+          if (r.status === "ok") return r.value;
+          if (r.status === "failed") {
+            persistenceOff = true;
+            report({ code: "storage", message: `reading stored presentations failed (${String(r.error)}): left untouched; this session runs without persistence` });
+          } else report({ code: "invalid-stored", message: "stored presentations are not JSON; ignored" });
+          return null;
+        })
+        .catch(() => null)
+    : Promise.resolve(null);
 
   const persist = () => {
-    if (!store) return;
+    if (!store || persistenceOff) return;
     if (pending.size > MAX_STORED_PRESENTATIONS) {
       const oldest = [...pending.values()].sort((a, b) => a.body.started_at.localeCompare(b.body.started_at));
       for (const o of oldest.slice(0, pending.size - MAX_STORED_PRESENTATIONS)) {
@@ -66,8 +80,11 @@ export function createPaywallTracker(config: PaywallTrackerConfig): PaywallTrack
         report({ code: "storage-cap", message: `dropped unsent presentation ${o.body.presentation_id} from storage` });
       }
     }
-    const snapshot = pending.size ? Object.fromEntries(pending) : null;
-    void loaded.then(() => store.save(snapshot));
+    // The map is built when the write's turn comes, not now: a write queued at launch
+    // must include the entries the initial read restores in the meantime.
+    void loaded.then(() => {
+      if (!persistenceOff) return store.saveWith(() => (pending.size ? Object.fromEntries(pending) : null));
+    });
   };
 
   const deliveryFor = (presentationId: string): Delivery<PaywallPresentationSnapshot> => {

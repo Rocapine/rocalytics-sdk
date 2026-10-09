@@ -83,4 +83,51 @@ describe("paywall tracker persistence", () => {
     const stored = JSON.parse(Object.values(storage.dump())[0]) as Record<string, { body: PaywallPresentationSnapshot }>;
     expect(Object.values(stored).map((o) => o.body.paywall.paywall_id).sort()).toEqual(["pw-1", "pw-2"]);
   });
+
+  it("a failed storage read leaves storage untouched and runs without persistence", async () => {
+    const writes: string[] = [];
+    const storage = {
+      getItem: () => { throw new Error("unavailable"); },
+      setItem: (_k: string, v: string) => { writes.push(v); },
+      removeItem: () => { writes.push("<removed>"); },
+    };
+    const time = new ManualTime();
+    const sink = new MemorySink<PaywallPresentationSnapshot>();
+    sink.respond = () => ({ outcome: "transient" });
+    const diagnostics: string[] = [];
+    const tracker = createPaywallTracker({ sink, context: CONTEXT, storage, clock: time.clock, timers: time.timers, onDiagnostic: (d) => diagnostics.push(d.code) });
+    tracker.start(INFO);
+    await flushMicrotasks();
+    await time.advance(0);
+    await tracker.idle();
+    expect(writes).toEqual([]);
+    expect(diagnostics).toContain("storage");
+  });
+
+  it("start() during the initial load never writes a map without the stored entries", async () => {
+    const backing = memoryStorage();
+    const first = launch(backing, "transient");
+    first.tracker.start(INFO);
+    await first.time.advance(0);
+    await first.tracker.idle();
+    first.tracker.dispose();
+    const written: string[][] = [];
+    const slow = {
+      getItem: async (k: string) => { await flushMicrotasks(5); return backing.getItem(k); },
+      setItem: async (k: string, v: string) => {
+        written.push(Object.values(JSON.parse(v) as Record<string, { body: PaywallPresentationSnapshot }>).map((o) => o.body.paywall.paywall_id).sort());
+        backing.setItem(k, v);
+      },
+      removeItem: async (k: string) => { backing.removeItem(k); },
+    };
+    const time = new ManualTime();
+    const sink = new MemorySink<PaywallPresentationSnapshot>();
+    sink.respond = () => ({ outcome: "transient" });
+    const second = createPaywallTracker({ sink, context: CONTEXT, storage: slow, clock: time.clock, timers: time.timers });
+    second.start({ ...INFO, paywallId: "pw-2" }); // before the load resolves
+    await flushMicrotasks();
+    await second.idle();
+    expect(written.length).toBeGreaterThan(0);
+    for (const w of written) expect(w).toContain("pw-1");
+  });
 });

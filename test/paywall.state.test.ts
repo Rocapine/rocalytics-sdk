@@ -59,6 +59,14 @@ describe("paywall presentation state", () => {
     expect(toSnapshot(u, T0 + 2).outcome).toEqual({ status: "purchased" });
   });
 
+  it("a purchase without shown() implies it was shown: conformant, shown_at = ended_at", () => {
+    const s = createState(INFO, ID, T0, CTX);
+    markEnded(s, { status: "purchased", transaction: { productId: "p" } }, T0 + 500);
+    const p = toSnapshot(s, T0 + 500);
+    assertPresentationConformant(p);
+    expect(p.shown_at).toBe(p.ended_at);
+  });
+
   it("error before shown is a valid ended snapshot with its reason", () => {
     const s = createState(INFO, ID, T0, CTX);
     markEnded(s, { status: "error", reason: "unknown-custom-screen" }, T0 + 10);
