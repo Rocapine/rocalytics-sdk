@@ -14,6 +14,7 @@ export {
 } from "./client";
 export type { RocalyticsClientOptions } from "./client";
 export { createRocalyticsOnboardingSink, rocalyticsOutcome, toOnboardingResponsePayload } from "./onboardingSink";
+export { createRocalyticsPaywallSink, paywallIngestOutcome } from "./paywallSink";
 export { loadExpoModules } from "./native";
 export type { ApplicationModule, ExpoModuleLoaders, LoadResult, RocalyticsModules } from "./native";
 export {
@@ -21,6 +22,7 @@ export {
   buildDemandScoreRequest,
   buildIdentifyRequest,
   buildOnboardingResponseRequest,
+  buildPaywallPresentationRequest,
   buildTrackRequest,
   getEventId,
   rocalyticsHeaders,

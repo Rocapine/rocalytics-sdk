@@ -1,4 +1,5 @@
 import type { DemandScoreSignals, IdentifyParams, OnboardingResponsePayload } from "./types";
+import type { PaywallPresentationSnapshot } from "../paywall/contract";
 
 export const ROCALYTICS_API_BASE = "https://rocalytics-api.rocapine.io";
 
@@ -117,4 +118,9 @@ export function getEventId(name: string, properties?: Record<string, unknown> | 
     (properties.transaction as { originalTransactionIdentifier?: string } | undefined)?.originalTransactionIdentifier;
   if (!txId) return undefined;
   return `${name}-${txId}`;
+}
+
+/** `/paywall-presentations` (I3): the body is the bare snapshot; identity is in the headers `post` sets. */
+export function buildPaywallPresentationRequest(context: RequestContext, snapshot: PaywallPresentationSnapshot): RocalyticsRequest {
+  return post(context, "paywall-presentations", snapshot);
 }
