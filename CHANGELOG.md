@@ -9,7 +9,7 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
 ## [Unreleased]
 
 ### Changed
-
+- Published to the public npm registry instead of GitHub Packages: `npm install @rocapine/rocalytics-sdk` needs no `.npmrc` and no token.
 - Renamed to `@rocapine/rocalytics-sdk`; `/rocalytics` is now `/client`. Never published under the old name.
 
 ### Added

@@ -10,17 +10,11 @@ Headless client SDK for Onboarding Studio. The first surface is the **onboarding
 
 ## Installing
 
-The package is private. It is published to GitHub Packages, not the public npm registry, and only accounts with read access to the Rocapine GitHub organization can install it.
+The package is public on the npm registry:
 
-1. In the app, add an `.npmrc` that maps the scope to GitHub Packages and reads a token from the environment:
-
-   ```ini
-   @rocapine:registry=https://npm.pkg.github.com
-   //npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
-   ```
-
-2. Set `GITHUB_TOKEN` to a GitHub token with the `read:packages` scope, locally and as a secret in CI and EAS builds. Never commit the token.
-3. `npm install @rocapine/rocalytics-sdk`.
+```sh
+npm install @rocapine/rocalytics-sdk
+```
 
 ## Subpaths
 
@@ -449,6 +443,6 @@ Changes are recorded in [`CHANGELOG.md`](CHANGELOG.md), in Keep a Changelog form
 1. Move the Unreleased entries under a new `## [x.y.z] - YYYY-MM-DD` heading. Use `unreleased` instead of the date until the version is published.
 2. Leave an empty `## [Unreleased]` section above it.
 
-To publish, from a clean checkout of `main`: `npm ci`, then `npm publish`. `publishConfig` sends it to GitHub Packages, and `prepublishOnly` runs lint, the test type-check, the tests and the exports check first, so a failing tree cannot be published. Publishing needs a GitHub token with the `write:packages` scope.
+To publish, from a clean checkout of `main`: `npm ci`, then `npm publish`. `publishConfig` sends it to the public npm registry, and `prepublishOnly` runs lint, the test type-check, the tests and the exports check first, so a failing tree cannot be published. Publishing needs an npm account with publish rights on the `@rocapine` scope (`npm login`).
 
 A test fails if the `package.json` version has no matching heading, or if the Unreleased section is missing.
