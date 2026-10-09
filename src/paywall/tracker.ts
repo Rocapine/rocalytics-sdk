@@ -54,6 +54,8 @@ export function createPaywallTracker(config: PaywallTrackerConfig): PaywallTrack
   const pending = new Map<string, Outbound<PaywallPresentationSnapshot>>();
   const deliveries = new Map<string, Delivery<PaywallPresentationSnapshot>>();
   let disposed = false;
+  // Writes wait for the first load, so a start() at launch cannot overwrite the stored map.
+  const loaded: Promise<Stored | null> = store ? store.load().catch(() => null) : Promise.resolve(null);
 
   const persist = () => {
     if (!store) return;
@@ -64,7 +66,8 @@ export function createPaywallTracker(config: PaywallTrackerConfig): PaywallTrack
         report({ code: "storage-cap", message: `dropped unsent presentation ${o.body.presentation_id} from storage` });
       }
     }
-    store.save(pending.size ? Object.fromEntries(pending) : null);
+    const snapshot = pending.size ? Object.fromEntries(pending) : null;
+    void loaded.then(() => store.save(snapshot));
   };
 
   const deliveryFor = (presentationId: string): Delivery<PaywallPresentationSnapshot> => {
@@ -93,6 +96,26 @@ export function createPaywallTracker(config: PaywallTrackerConfig): PaywallTrack
     deliveries.set(presentationId, d);
     return d;
   };
+
+  const isOutbound = (v: unknown): v is Outbound<PaywallPresentationSnapshot> => {
+    const o = v as { seq?: unknown; body?: { presentation_id?: unknown; seq?: unknown } } | null;
+    return !!o && typeof o.seq === "number" && !!o.body && typeof o.body === "object"
+      && typeof o.body.presentation_id === "string" && o.body.seq === o.seq;
+  };
+
+  if (store) {
+    void loaded.then((stored) => {
+      if (disposed || !stored || typeof stored !== "object") return;
+      for (const [id, item] of Object.entries(stored)) {
+        if (!isOutbound(item) || item.body.presentation_id !== id) {
+          report({ code: "invalid-stored", message: `ignored stored entry ${id}` });
+          continue;
+        }
+        if (deliveries.has(id)) continue;
+        deliveryFor(id).enqueue(item);
+      }
+    }).catch((e) => report({ code: "internal", message: String(e) }));
+  }
 
   const send = (s: PresentationState) => {
     if (disposed) return;
