@@ -368,7 +368,6 @@ That endpoint answers success with a 2xx and no body, so a 2xx is accepted. Othe
 | recorded the install under `rocadata-install-tracked-4` | Nothing to do. Either install key counts as "install sent", so no device sends `install` twice. |
 | imported the Expo modules at the top of the file | Nothing to do. The modules now load lazily, and a missing native module makes the client inert instead of crashing the launch. |
 | took `{ product, transaction }`, or `{ productId, redemptionResult }`, in `trackPurchase` | Both still work. `productId` defaults to `product.productIdentifier`. Product and transaction are typed as any object, so pass the purchase SDK's own types. |
-| passed `superwallEvent` to `trackPurchase`, or called `trackSuperwallEvent` | Neither is in the package: Superwall event tracking is not ported. |
 | called `getEventId(name, transactionId)` | Call `getEventId(name, { original_transaction_identifier: transactionId })`. It returns `undefined` when there is no transaction id. |
 | ran an app-specific step after start-up, such as handing the roca id to an attribution SDK | Do it in the app: `await rocalytics.ready`, then use `rocalytics.rocaId` when it is not null. |
 | logged requests or purchase properties to the console | The package logs neither. Start-up problems go to `onDiagnostic` (default `console.warn`; pass your own handler to route or silence them). A failed request still rejects. |

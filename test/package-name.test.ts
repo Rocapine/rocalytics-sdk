@@ -37,3 +37,25 @@ describe("package identity", () => {
     expect(hits.filter((h) => h !== "test/package-name.test.ts")).toEqual([]);
   });
 });
+
+describe("public repo hygiene", () => {
+  // Built by concatenation so this file does not match itself.
+  const banned = [["super", "wall"].join(""), ["onboarding", "studio"].join("-")];
+
+  it("no tracked file names a third-party paywall vendor or a private repo", () => {
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (["node_modules", "dist", ".git", ".superpowers"].includes(d.name)) continue;
+        const p = path.join(dir, d.name);
+        if (d.isDirectory()) walk(p);
+        else if (/\.(ts|mts|mjs|js|json|md|yml)$/.test(d.name) && d.name !== "package-lock.json") {
+          const text = fs.readFileSync(p, "utf8").toLowerCase();
+          for (const b of banned) if (text.includes(b)) hits.push(`${path.relative(ROOT, p)}: ${b}`);
+        }
+      }
+    };
+    walk(ROOT);
+    expect(hits).toEqual([]);
+  });
+});

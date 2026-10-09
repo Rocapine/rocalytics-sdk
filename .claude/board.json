@@ -1,7 +1,7 @@
 {
   "$comment": [
     "Chart for Rocapine/rocalytics-sdk on project #5 (Onboarding Studio v2 — Analytics, Users & Control).",
-    "Project #5 spans several repos; onboarding-studio/.claude/board.json is the master chart for it.",
+    "Project #5 spans several repos; another repo holds the master chart for it.",
     "This chart scopes the board to THIS repo only: select/route read issues from Rocapine/rocalytics-sdk.",
     "Board IDs below are copied from the master chart and verified against `gh project field-list 5` on 2026-10-05."
   ],
@@ -154,6 +154,6 @@
     "requiredSections": [
       "Definition of done"
     ],
-    "decomposition": "Native GitHub sub-issues + Blocked-by edges. Features live in Rocapine/onboarding-studio; rocalytics-sdk issues are technical Task sub-issues of them."
+    "decomposition": "Native GitHub sub-issues + Blocked-by edges. Features live in another repo; rocalytics-sdk issues are technical Task sub-issues of them."
   }
 }
