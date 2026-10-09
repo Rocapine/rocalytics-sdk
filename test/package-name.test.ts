@@ -59,3 +59,12 @@ describe("public repo hygiene", () => {
     expect(hits).toEqual([]);
   });
 });
+
+describe("registry", () => {
+  it("publishes publicly to the npm registry, not GitHub Packages", () => {
+    expect(pkg.publishConfig).toEqual({ access: "public", registry: "https://registry.npmjs.org/" });
+    for (const f of ["README.md", "package.json"]) {
+      expect(fs.readFileSync(path.join(ROOT, f), "utf8")).not.toContain("npm.pkg.github.com");
+    }
+  });
+});

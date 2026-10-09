@@ -64,7 +64,8 @@
     "CHANGELOG.md"
   ],
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json",
