@@ -8,6 +8,8 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
 
 ## [Unreleased]
 
+## [0.2.0] - unreleased
+
 ### Changed
 - Published to the public npm registry instead of GitHub Packages: `npm install @rocapine/rocalytics-sdk` needs no `.npmrc` and no token.
 - Renamed to `@rocapine/rocalytics-sdk`; `/rocalytics` is now `/client`. Never published under the old name.
@@ -51,6 +53,8 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
 - The package declares optional peer dependencies: `expo-application`, `expo-crypto`, `expo-device`, `expo-modules-core`, `expo-network`, `expo-secure-store` and `react-native`. Every range is `*`, so an app that already has any version of them installs the package without a peer conflict, and the client's run-time presence probe is the compatibility check. Only `/rocalytics` loads them. `/onboarding` and `/core` still depend on nothing, and `npm run check:exports` verifies that over their built require graph.
 
 ## [0.1.0] - unreleased
+
+Never published: its changes ship in 0.2.0, the first published version.
 
 First release.
 
