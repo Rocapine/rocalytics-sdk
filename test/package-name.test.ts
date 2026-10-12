@@ -68,3 +68,13 @@ describe("registry", () => {
     }
   });
 });
+
+describe("publish lifecycle", () => {
+  // npm runs prepublishOnly BEFORE prepack, so on a clean checkout dist/ does not exist yet
+  // when check:exports runs. The first 0.2.0 publish failed exactly there.
+  it("prepublishOnly builds before it checks the built exports", () => {
+    const s: string = pkg.scripts.prepublishOnly;
+    expect(s).toContain("npm run build");
+    expect(s.indexOf("npm run build")).toBeLessThan(s.indexOf("check:exports"));
+  });
+});
