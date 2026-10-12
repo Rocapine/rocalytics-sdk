@@ -6,7 +6,7 @@ Headless client SDK for Onboarding Studio. The first surface is the **onboarding
 - **One payload contract.** Every send is a snapshot in the shape of the [onboarding run contract v1](docs/onboarding-run-contract.md) (`schema_version: 1`), with a [JSON Schema](docs/onboarding-run.schema.json) and [TypeScript types](docs/onboarding-run.types.ts). The contract is authoritative; this README only explains how the tracker applies it.
 - **Pluggable transport.** Snapshots go to a sink. The stock sink POSTs to an HTTP collector you configure.
 
-> Status: `0.2.0`, not yet published. 0.2.0 is the first version published to npm; 0.1.0 never was.
+> Status: `0.2.0`, published on npm. 0.2.0 is the first published version; 0.1.0 never was.
 
 ## Installing
 
