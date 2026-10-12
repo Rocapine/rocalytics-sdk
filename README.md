@@ -443,6 +443,6 @@ Changes are recorded in [`CHANGELOG.md`](CHANGELOG.md), in Keep a Changelog form
 1. Move the Unreleased entries under a new `## [x.y.z] - YYYY-MM-DD` heading. Use `unreleased` instead of the date until the version is published.
 2. Leave an empty `## [Unreleased]` section above it.
 
-To publish, from a clean checkout of `main`: `npm ci`, then `npm publish`. `publishConfig` sends it to the public npm registry, and `prepublishOnly` runs lint, the test type-check, the tests, a build and the exports check first (npm runs it before `prepack`, so it builds itself), so a failing tree cannot be published. Publishing needs an npm account with publish rights on the `@rocapine` scope (`npm login`).
+To publish, bump the version and its CHANGELOG heading on `main`, then create a GitHub release tagged `v<version>` (for example `v0.3.0`). `.github/workflows/publish.yml` publishes it to npm through trusted publishing (OIDC): no npm token exists, and provenance is attached. The workflow refuses a tag that does not match `package.json`, and `prepublishOnly` runs lint, the test type-check, the tests, a build and the exports check first (npm runs it before `prepack`, so it builds itself), so a failing tree cannot be published. A prerelease version (`x.y.z-rc.1`) is published under the `next` dist-tag, never `latest`.
 
 A test fails if the `package.json` version has no matching heading, or if the Unreleased section is missing.

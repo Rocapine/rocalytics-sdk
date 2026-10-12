@@ -1,0 +1,51 @@
+name: Publish
+
+# Publishes to npm via trusted publishing (OIDC): no npm token is stored
+# anywhere. npm trusts this exact file (`publish.yml`) in Rocapine/rocalytics-sdk,
+# and the `npm` environment, so renaming either breaks publishing.
+# Provenance is attached automatically.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      # Trusted publishing needs npm >= 11.5.1.
+      - run: npm install -g npm@^11.5.1
+
+      - name: Release tag matches package.json version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+
+      - run: npm ci
+
+      # prepublishOnly runs lint, the test type-check, tests, build and the
+      # exports check. A prerelease version (x.y.z-rc.1) goes to `next`, so it
+      # never becomes `latest`.
+      - name: Publish
+        run: |
+          version=$(node -p "require('./package.json').version")
+          case "$version" in *-*) tag=next ;; *) tag=latest ;; esac
+          npm publish --tag "$tag"
