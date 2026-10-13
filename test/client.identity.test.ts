@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RocalyticsClient, loadExpoModules, type Diagnostic } from "../src/client";
+import { RocalyticsClient, loadExpoModules, type Diagnostic, type RocalyticsClientOptions } from "../src/client";
 import { FakeSecureStore, IOS, ROCA_ID, fakeModules, recordingFetch, stubIntl } from "./client.fakes";
 
 // The identity a device keeps across launches, the once-per-device install
@@ -15,10 +15,10 @@ beforeEach(() => {
 });
 afterEach(() => restoreIntl());
 
-function start(store: FakeSecureStore, device = IOS) {
+function start(store: FakeSecureStore, device = IOS, options: Pick<RocalyticsClientOptions, "identifyOnStart"> = {}) {
   const http = recordingFetch();
   const diagnostics: Diagnostic[] = [];
-  const client = new RocalyticsClient({ modules: fakeModules(device, store), fetch: http.fetch, onDiagnostic: (d) => diagnostics.push(d) });
+  const client = new RocalyticsClient({ modules: fakeModules(device, store), fetch: http.fetch, onDiagnostic: (d) => diagnostics.push(d), ...options });
   return { client, http, diagnostics };
 }
 
@@ -115,6 +115,51 @@ describe("the install event", () => {
     await client.ready;
     expect(http.paths()).toEqual(["/functions/v1/identify"]);
     expect(client.rocaId).toBe(ROCA_ID); // the id is fine; only the install event is skipped
+  });
+});
+
+describe("identifyOnStart", () => {
+  it.each([{}, { identifyOnStart: true }])("%o: start-up identifies the device, then sends install", async (options) => {
+    const store = new FakeSecureStore();
+    const { client, http } = start(store, IOS, options);
+    await client.ready;
+    expect(http.paths()).toEqual(["/functions/v1/identify", "/functions/v1/track"]);
+    expect(http.requests[0].body).toEqual({ idfv: IOS.idfv, locale: IOS.locale });
+  });
+
+  it("false: no identify at start-up, the roca id still resolves, and install is still sent exactly once", async () => {
+    const store = new FakeSecureStore();
+    const { client, http, diagnostics } = start(store, IOS, { identifyOnStart: false });
+    await client.ready;
+    expect(client.rocaId).toBe(ROCA_ID);
+    expect(http.paths()).toEqual(["/functions/v1/track"]);
+    expect((http.requests[0].body as { name: string }).name).toBe("install");
+    expect(diagnostics).toEqual([]);
+
+    const again = start(store, IOS, { identifyOnStart: false });
+    await again.client.ready;
+    expect(again.client.rocaId).toBe(ROCA_ID);
+    expect(again.http.paths()).toEqual([]);
+  });
+
+  it("false: does not read the device identifiers, so one that fails to read cannot cost the install event", async () => {
+    const store = new FakeSecureStore();
+    const modules = fakeModules(IOS, store);
+    modules.application.getIosIdForVendorAsync = () => Promise.reject(new Error("idfv unavailable"));
+    const http = recordingFetch();
+    const diagnostics: Diagnostic[] = [];
+    const client = new RocalyticsClient({ modules, fetch: http.fetch, onDiagnostic: (d) => diagnostics.push(d), identifyOnStart: false });
+    await client.ready;
+    expect(http.paths()).toEqual(["/functions/v1/track"]);
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("false: the host's own identify still goes out, after start-up", async () => {
+    const store = new FakeSecureStore({ [KEY]: ROCA_ID, "rocadata-install-tracked": "true" });
+    const { client, http } = start(store, IOS, { identifyOnStart: false });
+    await client.identify({ user_id: "u", locale: "fr" });
+    expect(http.paths()).toEqual(["/functions/v1/identify"]);
+    expect(http.requests[0].body).toEqual({ user_id: "u", locale: "fr" });
   });
 });
 

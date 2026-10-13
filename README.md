@@ -6,7 +6,7 @@ Headless client SDK for Onboarding Studio. The first surface is the **onboarding
 - **One payload contract.** Every send is a snapshot in the shape of the [onboarding run contract v1](docs/onboarding-run-contract.md) (`schema_version: 1`), with a [JSON Schema](docs/onboarding-run.schema.json) and [TypeScript types](docs/onboarding-run.types.ts). The contract is authoritative; this README only explains how the tracker applies it.
 - **Pluggable transport.** Snapshots go to a sink. The stock sink POSTs to an HTTP collector you configure.
 
-> Status: `0.2.0`, published on npm. 0.2.0 is the first published version; 0.1.0 never was.
+> Status: `0.3.0` is the latest version on npm. 0.2.0 is the first published version; 0.1.0 never was.
 
 ## Installing
 
@@ -360,7 +360,9 @@ export function setUpOnboardingTracking(storage: KeyValueStorage, context: () =>
 
 ### API
 
-`new RocalyticsClient(options?)`. Every option is for tests or unusual hosts: `modules` (your own native modules, or `null` to run inert), `fetch`, `baseUrl`, `clock` and `onDiagnostic` (default `console.warn`).
+`new RocalyticsClient(options?)`. Every option is for tests or unusual hosts: `modules` (your own native modules, or `null` to run inert), `fetch`, `baseUrl`, `clock`, `onDiagnostic` (default `console.warn`) and `identifyOnStart`.
+
+`identifyOnStart` (default `true`) controls the identify the client sends at start-up, `{ idfv, android_id, locale }` with the device locale. Pass `false` when the app already identifies the device itself with richer fields: otherwise every launch also sends that thinner identify, and its `locale` (the device's) can disagree with the one the app sends (the language picked in the app), so whichever lands last wins. With `false`, start-up still reads or mints the roca id and still sends `install` once, but sends no identify. The app must then call `identify()` before anything that needs the device's identity row, such as `sendOnboardingRun` (its endpoint answers 404 for a roca id that was never identified).
 
 | Member | |
 |---|---|
@@ -390,7 +392,7 @@ A method whose request gets a non-2xx answer rejects with `[ROCALYTICS] <endpoin
 
 The ingest keeps one onboarding per roca id, so report a flow through the sink or through `trackOnboarding`, not both.
 
-That endpoint answers success with a 2xx and no body, so a 2xx is accepted. Otherwise the contract's rule applies: only a body saying `{"outcome": "rejected"}` is permanent, and every other answer is transient and retried. That includes a 400 without such a body, and a 404. Every send waits for `ready`, so a 404 (no identity for this roca id) means the start-up identify failed in this session. The retries stop failing once an identify succeeds, at the next launch or through the app's own `identify()` call.
+That endpoint answers success with a 2xx and no body, so a 2xx is accepted. Otherwise the contract's rule applies: only a body saying `{"outcome": "rejected"}` is permanent, and every other answer is transient and retried. That includes a 400 without such a body, and a 404. Every send waits for `ready`, so a 404 (no identity for this roca id) means no identify has succeeded for it yet: the start-up identify failed in this session, or `identifyOnStart` is `false` and the app has not identified the device yet. The retries stop failing once an identify succeeds: through the app's own `identify()` call, or at the next launch when `identifyOnStart` is on.
 
 **Known limits.**
 

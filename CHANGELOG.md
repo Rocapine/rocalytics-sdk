@@ -7,6 +7,13 @@ The format follows Keep a Changelog, and the project follows Semantic Versioning
 Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.0 is released, the entries before it may be truncated from this file.
 
 ## [Unreleased]
+## [0.3.0] - 2026-10-13
+### Added
+- `@rocapine/rocalytics-sdk/client`: the `identifyOnStart` option of `RocalyticsClient`, default `true` (unchanged behaviour).
+  - With `false`, start-up still reads or mints the roca id and still sends `install` once per device, but sends no identify and does not read the device identifiers it would carry.
+  - For a host that already identifies the device with richer fields. Without it, each launch also sends a thinner identify, and its `locale` (the device locale) can disagree with the host's (the language picked in the app), so the stored `locale` depends on which call lands last.
+  - With `false`, the host must call `identify()` before anything that needs the device's identity row, such as `sendOnboardingRun`.
+
 
 ## [0.2.0] - 2026-10-12
 
