@@ -57,6 +57,15 @@ export interface RocalyticsClientOptions {
   clock?: Clock;
   /** Receives why the client went inert, or why its start-up failed. Default: `console.warn`. */
   onDiagnostic?: DiagnosticHandler;
+  /**
+   * Whether start-up identifies the device with `{ idfv, android_id, locale }`.
+   * Default `true`. Pass `false` when the host runs its own identify: start-up
+   * then still reads or mints the roca id and sends `install` once, but sends
+   * no identify. The host must then call `identify()` before anything that
+   * needs the device's identity row, such as `sendOnboardingRun`, whose
+   * endpoint answers 404 for a roca id that has never been identified.
+   */
+  identifyOnStart?: boolean;
 }
 
 const intlOptions = () => Intl.DateTimeFormat().resolvedOptions();
@@ -64,8 +73,9 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 
 /**
  * The Rocalytics client. Create one per app, at startup: the constructor
- * starts it (reads or mints the device's roca id, identifies the device,
- * sends `install` once per device), and every method waits for that.
+ * starts it (reads or mints the device's roca id, identifies the device
+ * unless `identifyOnStart` is `false`, sends `install` once per device), and
+ * every method waits for that.
  *
  * Inert when it cannot run: a native module is missing from the binary, or
  * the stored id cannot be read. `ready` still resolves, `rocaId` stays null,
@@ -272,9 +282,11 @@ export class RocalyticsClient {
     }
     this.native = native;
     try {
-      const idfv = native.platform.OS === "ios" ? await native.application.getIosIdForVendorAsync() : null;
-      const androidId = native.platform.OS === "android" ? native.application.getAndroidId() : null;
-      await this.sendIdentify({ idfv, android_id: androidId, locale: intlOptions().locale });
+      if (this.options.identifyOnStart !== false) {
+        const idfv = native.platform.OS === "ios" ? await native.application.getIosIdForVendorAsync() : null;
+        const androidId = native.platform.OS === "android" ? native.application.getAndroidId() : null;
+        await this.sendIdentify({ idfv, android_id: androidId, locale: intlOptions().locale });
+      }
 
       this.deviceContext = await this.readDeviceContext(native);
 
