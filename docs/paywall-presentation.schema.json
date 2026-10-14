@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:rocalytics-sdk:paywall-presentation:1",
   "title": "Paywall presentation snapshot, schema_version 1",
-  "description": "One send of a paywall presentation. Each send replaces the presentation's previous snapshot. Normative text: paywall-presentation-contract.md. The schema is closed: an unknown field is an error.",
+  "description": "One send of a paywall presentation. Each send replaces the presentation's previous snapshot. Normative text: paywall-presentation-contract.md (v1.1; schema_version stays 1). The schema is closed: an unknown field is an error. The ids each provider requires are a section 4 rule.",
   "type": "object",
   "required": [
     "schema_version",
@@ -66,8 +66,6 @@
     "paywall": {
       "type": "object",
       "required": [
-        "moment_key",
-        "paywall_id",
         "audience_id",
         "render_mode",
         "billing"
@@ -93,7 +91,8 @@
         "render_mode": {
           "enum": [
             "elements",
-            "custom"
+            "custom",
+            "external"
           ]
         },
         "billing": {
@@ -107,13 +106,31 @@
         },
         "deployment_id": {
           "$ref": "#/$defs/id"
+        },
+        "placement": {
+          "$ref": "#/$defs/id"
+        },
+        "external_paywall_id": {
+          "$ref": "#/$defs/id"
+        },
+        "provider_name": {
+          "$ref": "#/$defs/shortText"
         }
       }
     },
     "surface": {
       "enum": [
         "present",
-        "paywall_step"
+        "paywall_step",
+        "placement"
+      ]
+    },
+    "provider": {
+      "description": "v1.1. Absent means studio.",
+      "enum": [
+        "studio",
+        "external",
+        "native"
       ]
     },
     "onboarding_run": {

@@ -112,10 +112,10 @@ describe("paywall presentation state", () => {
   it("validateInfo lists every problem and accepts a good info", () => {
     expect(validateInfo(INFO)).toEqual([]);
     expect(validateInfo({ ...INFO, paywallId: "", surface: "modal", renderMode: "x", audienceId: 3 })).toEqual([
-      "paywallId must be 1 to 128 characters",
-      "audienceId must be null or 1 to 128 characters",
-      "renderMode must be elements or custom",
-      "surface must be present or paywall_step",
+      "paywallId must be 1 to 128 UTF-8 bytes, with no NUL or lone surrogate (required with provider studio)",
+      "audienceId must be null or 1 to 128 UTF-8 bytes, with no NUL or lone surrogate",
+      "renderMode must be elements, custom or external",
+      "surface must be present, paywall_step or placement",
     ]);
     expect(validateInfo(null)).toEqual(["info is not an object"]);
   });

@@ -10,15 +10,19 @@ export type PresentationFromSchema = {
   ended_at: string | null;
   sent_at: string;
   paywall: {
-    moment_key: string;
-    paywall_id: string;
+    moment_key?: string;
+    paywall_id?: string;
     audience_id: string | null;
-    render_mode: "elements" | "custom";
+    render_mode: "elements" | "custom" | "external";
     billing: "store" | "stripe";
     variant_key?: string;
     deployment_id?: string;
+    placement?: string;
+    external_paywall_id?: string;
+    provider_name?: string;
   };
-  surface: "present" | "paywall_step";
+  surface: "present" | "paywall_step" | "placement";
+  provider?: "studio" | "external" | "native";
   onboarding_run?: {
     run_id: string;
     step_key: string;

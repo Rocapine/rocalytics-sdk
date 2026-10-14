@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { unsupportedKeywords } from "./miniJsonSchema";
 import { DOCS, acceptPresentation, assertPresentationConformant, presentationSchema } from "./paywall-contract";
-import { ALL_EXAMPLES, PURCHASED_ANDROID, RENDER_ERROR } from "../docs/paywall-presentation.examples";
+import { ALL_EXAMPLES, EXTERNAL_PLACEMENT, NATIVE_STEP, PURCHASED_ANDROID, RENDER_ERROR } from "../docs/paywall-presentation.examples";
 
 const ROOT = path.join(__dirname, "..");
 const withoutImport = (s: string) => s.replace(/^import type \{ RunContext, Timestamp \} from "[^"]+";$/m, "");
@@ -38,6 +38,33 @@ describe("paywall presentation contract copy in docs/", () => {
     const end = PURCHASED_ANDROID[2];
     expect(acceptPresentation(null, { ...end, outcome: { status: "dismissed", transaction: { product_id: "p" } } })).toBe("rejected");
     expect(acceptPresentation(null, { ...end, outcome: { status: "purchased", transaction: {} } })).toBe("rejected");
+  });
+
+  it("v1.1: each provider's required ids are enforced; a missing provider is studio", () => {
+    const drop = (p: typeof EXTERNAL_PLACEMENT, k: string) => {
+      const paywall: Record<string, unknown> = { ...p.paywall };
+      delete paywall[k];
+      return { ...p, paywall };
+    };
+    const [s1] = PURCHASED_ANDROID;
+    expect(acceptPresentation(null, drop(s1, "moment_key"))).toBe("rejected");
+    expect(acceptPresentation(null, drop(s1, "paywall_id"))).toBe("rejected");
+    expect(acceptPresentation(null, { ...drop(s1, "paywall_id"), provider: "studio" })).toBe("rejected");
+    expect(acceptPresentation(null, drop(EXTERNAL_PLACEMENT, "placement"))).toBe("rejected");
+    expect(acceptPresentation(null, drop(EXTERNAL_PLACEMENT, "external_paywall_id"))).toBe("rejected");
+    expect(acceptPresentation(null, drop(NATIVE_STEP, "external_paywall_id"))).toBe("rejected");
+    expect(acceptPresentation(null, drop(NATIVE_STEP, "placement"))).toBe("accepted");
+    expect(acceptPresentation(null, { ...EXTERNAL_PLACEMENT, provider: "other" })).toBe("rejected");
+    expect(acceptPresentation(null, { ...EXTERNAL_PLACEMENT, paywall: { ...EXTERNAL_PLACEMENT.paywall, provider_name: "x".repeat(33) } })).toBe("rejected");
+  });
+
+  it("v1.1: provider is immutable, and an absent provider equals studio", () => {
+    const [s1, s2] = PURCHASED_ANDROID;
+    expect(acceptPresentation(s1, { ...s2, provider: "studio" })).toBe("accepted");
+    expect(acceptPresentation({ ...s1, provider: "studio" }, s2)).toBe("accepted");
+    expect(acceptPresentation(s1, { ...s2, provider: "native", paywall: { ...s2.paywall, external_paywall_id: "x" } })).toBe("rejected");
+    const end = { ...NATIVE_STEP, seq: 4 };
+    expect(acceptPresentation({ ...NATIVE_STEP, status: "in_progress", ended_at: null, outcome: null }, { ...end, provider: "external" })).toBe("rejected");
   });
 
   it("P12: a price or any unknown transaction field is rejected", () => {

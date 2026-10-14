@@ -1,7 +1,7 @@
 // @rocapine/rocalytics-sdk/paywall: the paywall presentation tracker.
 //
 // Reports each paywall presentation as snapshots in the shape of the paywall
-// presentation contract v1 (docs/paywall-presentation-contract.md). Pass the
+// presentation contract v1.1 (docs/paywall-presentation-contract.md). Pass the
 // tracker to the paywall host as its `observer`. Headless: no dependency.
 
 export { createPaywallTracker, DEFAULT_PAYWALL_STORAGE_KEY, MAX_STORED_PRESENTATIONS } from "./tracker";
@@ -11,6 +11,7 @@ export type {
   PaywallPresentationEnd,
   PaywallPresentationHandle,
   PaywallPresentationInfo,
+  PaywallProvider,
   PaywallSurface,
   PaywallTransactionInfo,
 } from "./observer";
@@ -30,6 +31,7 @@ export type {
   PresentationOutcome,
   PresentationOutcomeStatus,
   PresentationPaywall,
+  PresentationProvider,
   PresentationStatus,
   PresentationSurface,
   PresentationTransaction,

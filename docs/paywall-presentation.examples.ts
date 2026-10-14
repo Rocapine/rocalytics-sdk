@@ -39,4 +39,29 @@ export const RENDER_ERROR: PaywallPresentationSnapshot = {
   outcome: { status: "error", reason: "unknown-custom-screen" }, context,
 };
 
-export const ALL_EXAMPLES: PaywallPresentationSnapshot[] = [...PURCHASED_ANDROID, DISMISSED_STEP, RENDER_ERROR];
+/** v1.1: a paywall served by a third-party paywall service at an in-app placement, purchased on iOS. */
+export const EXTERNAL_PLACEMENT: PaywallPresentationSnapshot = {
+  schema_version: 1, presentation_id: "0192f1a2-7c3d-7e4f-8a5b-6c7d8e9f0a1e", seq: 3, status: "ended",
+  started_at: "2026-01-10T09:00:00.000Z", shown_at: "2026-01-10T09:00:00.400Z", ended_at: "2026-01-10T09:00:20.000Z",
+  sent_at: "2026-01-10T09:00:20.000Z",
+  paywall: {
+    audience_id: null, render_mode: "external", billing: "store", variant_key: "variant-3",
+    placement: "settings_upgrade", external_paywall_id: "annual_offer_v2", provider_name: "example-service",
+  },
+  surface: "placement", provider: "external",
+  outcome: { status: "purchased", transaction: { original_transaction_identifier: "2000000123456789", product_id: "pro_annual" } },
+  context: { ...context, platform: "ios", os_version: "18.1" },
+};
+
+/** v1.1: a paywall the app renders with its own code, as an onboarding step, dismissed. */
+export const NATIVE_STEP: PaywallPresentationSnapshot = {
+  schema_version: 1, presentation_id: "0192f1a2-7c3d-7e4f-8a5b-6c7d8e9f0a1f", seq: 3, status: "ended",
+  started_at: "2026-01-10T09:00:00.000Z", shown_at: "2026-01-10T09:00:00.100Z", ended_at: "2026-01-10T09:00:09.000Z",
+  sent_at: "2026-01-10T09:00:09.000Z",
+  paywall: { audience_id: null, render_mode: "custom", billing: "store", external_paywall_id: "trial_toggle" },
+  surface: "paywall_step", provider: "native",
+  onboarding_run: { run_id: "0192f1a2-0000-7000-8000-000000000002", step_key: "paywall" },
+  outcome: { status: "dismissed" }, context,
+};
+
+export const ALL_EXAMPLES: PaywallPresentationSnapshot[] = [...PURCHASED_ANDROID, DISMISSED_STEP, RENDER_ERROR, EXTERNAL_PLACEMENT, NATIVE_STEP];
