@@ -1,10 +1,14 @@
 import type { WireRunContext } from "../core/context";
 import { toTimestamp } from "../core/time";
-import type { PaywallPresentationSnapshot, PresentationOutcome, PresentationPaywall, PresentationTransaction } from "./contract";
+import type { PaywallPresentationSnapshot, PresentationOutcome, PresentationPaywall, PresentationProvider, PresentationSurface, PresentationTransaction } from "./contract";
 import type { PaywallPresentationEnd, PaywallPresentationInfo, PaywallTransactionInfo } from "./observer";
 
 const OUTCOMES = new Set(["purchased", "dismissed", "cancelled", "error"]);
 const id = (v: unknown) => typeof v === "string" && v.length >= 1 && v.length <= 128;
+const shortText = (v: unknown) => typeof v === "string" && v.length >= 1 && v.length <= 32;
+const PROVIDERS = ["studio", "external", "native"];
+const SURFACES = ["present", "paywall_step", "placement"];
+const RENDER_MODES = ["elements", "custom", "external"];
 const storeId = (v: unknown): v is string => typeof v === "string" && v.length >= 1 && v.length <= 1024;
 const KEY = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -14,12 +18,18 @@ export function validateInfo(info: unknown): string[] {
   if (!info || typeof info !== "object") return ["info is not an object"];
   const i = info as Record<string, unknown>;
   const errors: string[] = [];
-  if (!id(i.moment)) errors.push("moment must be 1 to 128 characters");
-  if (!id(i.paywallId)) errors.push("paywallId must be 1 to 128 characters");
-  if (i.audienceId !== null && !id(i.audienceId)) errors.push("audienceId must be null or 1 to 128 characters");
-  if (i.renderMode !== "elements" && i.renderMode !== "custom") errors.push("renderMode must be elements or custom");
+  if (i.provider !== undefined && !PROVIDERS.includes(i.provider as string)) errors.push("provider must be studio, external or native");
+  // Contract v1.1, section 4: the ids each provider requires. Absent means studio.
+  const provider = i.provider ?? "studio";
+  const required = provider === "studio" ? ["moment", "paywallId"] : provider === "external" ? ["placement", "externalPaywallId"] : provider === "native" ? ["externalPaywallId"] : [];
+  for (const k of ["moment", "paywallId", "placement", "externalPaywallId"]) {
+    if (required.includes(k) ? !id(i[k]) : i[k] !== undefined && !id(i[k])) errors.push(`${k} must be 1 to 128 characters${required.includes(k) ? ` (required with provider ${provider})` : ""}`);
+  }
+  if (i.providerName !== undefined && !shortText(i.providerName)) errors.push("providerName must be 1 to 32 characters");
+  if (i.audienceId !== undefined && i.audienceId !== null && !id(i.audienceId)) errors.push("audienceId must be null or 1 to 128 characters");
+  if (!RENDER_MODES.includes(i.renderMode as string)) errors.push("renderMode must be elements, custom or external");
   if (i.billing !== "store" && i.billing !== "stripe") errors.push("billing must be store or stripe");
-  if (i.surface !== "present" && i.surface !== "paywall_step") errors.push("surface must be present or paywall_step");
+  if (!SURFACES.includes(i.surface as string)) errors.push("surface must be present, paywall_step or placement");
   if (i.variantKey !== undefined && !id(i.variantKey)) errors.push("variantKey must be 1 to 128 characters");
   if (i.deploymentId !== undefined && !id(i.deploymentId)) errors.push("deploymentId must be 1 to 128 characters");
   const run = i.onboardingRun as { runId?: unknown; stepKey?: unknown } | undefined;
@@ -37,21 +47,27 @@ export interface PresentationState {
   endedAt: number | null;
   outcome: PresentationOutcome | null;
   readonly paywall: PresentationPaywall;
-  readonly surface: "present" | "paywall_step";
+  readonly surface: PresentationSurface;
+  readonly provider?: PresentationProvider;
   readonly onboardingRun?: { run_id: string; step_key: string };
   readonly context: WireRunContext;
 }
 
 export function createState(info: PaywallPresentationInfo, presentationId: string, nowMs: number, context: WireRunContext): PresentationState {
+  // Key order is the wire order. A v1-shaped info (no provider, Studio ids set)
+  // yields exactly the v1 object: the v1.1 keys are added only when set.
   const paywall: PresentationPaywall = {
-    moment_key: info.moment,
-    paywall_id: info.paywallId,
-    audience_id: info.audienceId,
+    ...(info.moment !== undefined ? { moment_key: info.moment } : {}),
+    ...(info.paywallId !== undefined ? { paywall_id: info.paywallId } : {}),
+    audience_id: info.audienceId ?? null,
     render_mode: info.renderMode,
     billing: info.billing,
   };
   if (info.variantKey !== undefined) paywall.variant_key = info.variantKey;
   if (info.deploymentId !== undefined) paywall.deployment_id = info.deploymentId;
+  if (info.placement !== undefined) paywall.placement = info.placement;
+  if (info.externalPaywallId !== undefined) paywall.external_paywall_id = info.externalPaywallId;
+  if (info.providerName !== undefined) paywall.provider_name = info.providerName;
   return {
     id: presentationId,
     seq: 0,
@@ -61,6 +77,7 @@ export function createState(info: PaywallPresentationInfo, presentationId: strin
     outcome: null,
     paywall,
     surface: info.surface,
+    ...(info.provider !== undefined ? { provider: info.provider } : {}),
     ...(info.surface === "paywall_step" && info.onboardingRun
       ? { onboardingRun: { run_id: info.onboardingRun.runId, step_key: info.onboardingRun.stepKey } }
       : {}),
@@ -116,6 +133,7 @@ export function toSnapshot(s: PresentationState, nowMs: number): PaywallPresenta
     sent_at: toTimestamp(Math.max(nowMs, floor(s))),
     paywall: { ...s.paywall },
     surface: s.surface,
+    ...(s.provider !== undefined ? { provider: s.provider } : {}),
     ...(s.onboardingRun ? { onboarding_run: { ...s.onboardingRun } } : {}),
     context: { ...s.context },
   };

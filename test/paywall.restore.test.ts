@@ -115,7 +115,7 @@ describe("paywall tracker persistence", () => {
     const slow = {
       getItem: async (k: string) => { await flushMicrotasks(5); return backing.getItem(k); },
       setItem: async (k: string, v: string) => {
-        written.push(Object.values(JSON.parse(v) as Record<string, { body: PaywallPresentationSnapshot }>).map((o) => o.body.paywall.paywall_id).sort());
+        written.push(Object.values(JSON.parse(v) as Record<string, { body: PaywallPresentationSnapshot }>).map((o) => o.body.paywall.paywall_id ?? "").sort());
         backing.setItem(k, v);
       },
       removeItem: async (k: string) => { backing.removeItem(k); },

@@ -248,7 +248,9 @@ Unlike the limits above, which come from the contract, these are the tracker's o
 
 ## Paywall presentations
 
-`@rocapine/rocalytics-sdk/paywall` reports each paywall presentation as up to three snapshots (start, shown, end) in the shape of the [paywall presentation contract v1](docs/paywall-presentation-contract.md). A presentation is one `present()` call, or one display of a `Paywall` onboarding step, that resolved to a paywall. Calls refused before a paywall is chosen send nothing. An error after that sends a start and an `error` end.
+`@rocapine/rocalytics-sdk/paywall` reports each paywall presentation as up to three snapshots (start, shown, end) in the shape of the [paywall presentation contract v1.1](docs/paywall-presentation-contract.md). A presentation is one `present()` call, or one display of a `Paywall` onboarding step, that resolved to a paywall. Calls refused before a paywall is chosen send nothing. An error after that sends a start and an `error` end.
+
+The same tracker reports paywalls the Studio does not serve (contract v1.1). The app calls `start()` itself with `provider: "external"` for a third-party paywall service, with its `placement` and `externalPaywallId`, or with `provider: "native"` for a paywall the app renders with its own code, with its `externalPaywallId`. `moment` and `paywallId` are then optional, and `providerName` can name the service as free text. A call without `provider` sends exactly the v1 snapshot.
 
 The tracker satisfies the paywall host's `PaywallObserver` interface structurally, so it is passed to the host as `observer`. This file is [`examples/native-paywall.ts`](examples/native-paywall.ts), type-checked by the test suite:
 

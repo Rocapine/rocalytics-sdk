@@ -33,6 +33,12 @@ export function presentationSemanticErrors(p: Json): string[] {
   if ((p.surface === "paywall_step") !== (p.onboarding_run !== undefined) && p.onboarding_run !== undefined) {
     errors.push("onboarding_run only with surface paywall_step");
   }
+  // v1.1: the ids each provider requires. A missing provider is "studio".
+  const provider = p.provider ?? "studio";
+  const required = provider === "studio" ? ["moment_key", "paywall_id"]
+    : provider === "external" ? ["placement", "external_paywall_id"]
+    : ["external_paywall_id"];
+  for (const k of required) if (p.paywall?.[k] === undefined) errors.push(`paywall.${k} required with provider ${provider}`);
   return errors;
 }
 
@@ -44,6 +50,8 @@ export function assertPresentationConformant(p: unknown): void {
 
 export type Outcome = "accepted" | "ignored" | "rejected";
 const IMMUTABLE = ["presentation_id", "started_at", "paywall", "surface", "onboarding_run", "context"] as const;
+/** A missing provider and "studio" are the same provider (v1.1). */
+const providerOf = (p: Json) => p.provider ?? "studio";
 
 /** Section 5: what the ingest answers, given the stored snapshot for this (roca_id, presentation_id). */
 export function acceptPresentation(stored: Json | null, incoming: Json): Outcome {
@@ -52,5 +60,6 @@ export function acceptPresentation(stored: Json | null, incoming: Json): Outcome
   if (validate(presentationSchema, incoming).length > 0 || presentationSemanticErrors(incoming).length > 0) return "rejected";
   if (stored === null) return "accepted";
   for (const f of IMMUTABLE) if (JSON.stringify(stored[f]) !== JSON.stringify(incoming[f])) return "rejected";
+  if (providerOf(stored) !== providerOf(incoming)) return "rejected";
   return incoming.seq > stored.seq ? "accepted" : "ignored";
 }

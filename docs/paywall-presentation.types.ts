@@ -1,23 +1,32 @@
-// Paywall presentation contract v1: the payload types.
+// Paywall presentation contract v1.1 (schema_version 1): the payload types.
 // Normative text: docs/paywall-presentation-contract.md. src/paywall/contract.ts
 // is this file, byte for byte, except its import line (test/paywall-docs.test.ts).
 import type { RunContext, Timestamp } from "./onboarding-run.types";
 
 export type PresentationStatus = "in_progress" | "ended";
 export type PresentationOutcomeStatus = "purchased" | "dismissed" | "cancelled" | "error";
-export type PresentationSurface = "present" | "paywall_step";
+export type PresentationSurface = "present" | "paywall_step" | "placement";
+/** Who served the paywall. Absent means "studio". */
+export type PresentationProvider = "studio" | "external" | "native";
 
 export interface PresentationPaywall {
-  /** The moment's key: what the host passed to `present()`. */
-  moment_key: string;
-  /** The Studio paywall id the moment's audience waterfall picked. */
-  paywall_id: string;
-  /** The audience that matched; null when the catalog carried none. */
+  /** The moment's key: what the host passed to `present()`. Required when the provider is "studio". */
+  moment_key?: string;
+  /** The Studio paywall id the moment's audience waterfall picked. Required when the provider is "studio". */
+  paywall_id?: string;
+  /** The audience that matched; null when the catalog carried none, and for a paywall the Studio did not serve. */
   audience_id: string | null;
-  render_mode: "elements" | "custom";
+  /** "external": rendered by a third-party paywall service. */
+  render_mode: "elements" | "custom" | "external";
   billing: "store" | "stripe";
   variant_key?: string;
   deployment_id?: string;
+  /** The app's trigger name. Required when the provider is "external". */
+  placement?: string;
+  /** The non-Studio paywall's id. Required when the provider is "external" or "native". */
+  external_paywall_id?: string;
+  /** Free text naming the paywall service. */
+  provider_name?: string;
 }
 
 export interface PresentationTransaction {
@@ -53,6 +62,8 @@ interface PresentationBase {
   sent_at: Timestamp;
   paywall: PresentationPaywall;
   surface: PresentationSurface;
+  /** v1.1. Absent means "studio": a v1 snapshot has no provider. */
+  provider?: PresentationProvider;
   /** Only for surface "paywall_step": the onboarding run it sits in. */
   onboarding_run?: { run_id: string; step_key: string };
   context: RunContext;

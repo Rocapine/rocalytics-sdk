@@ -7,6 +7,19 @@ The format follows Keep a Changelog, and the project follows Semantic Versioning
 Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.0 is released, the entries before it may be truncated from this file.
 
 ## [Unreleased]
+## [0.4.0] - unreleased
+### Added
+- `@rocapine/rocalytics-sdk/paywall`: paywall presentation contract v1.1, additive, `schema_version` still 1. The tracker now reports paywalls the Studio does not serve.
+  - `PaywallPresentationInfo` gains optional `provider` (`"studio" | "external" | "native"`, absent meaning `studio`), `placement`, `externalPaywallId` and `providerName`. `surface` gains `"placement"` and `renderMode` gains `"external"`.
+  - They are sent as `provider`, `paywall.placement`, `paywall.external_paywall_id` and `paywall.provider_name`. An absent optional field is left out, never sent as null.
+  - `start()` checks the ids each provider requires: `moment` and `paywallId` for `studio`, `placement` and `externalPaywallId` for `external`, `externalPaywallId` for `native`. A missing one is `invalid-info`, and nothing is sent.
+  - New exported types: `PaywallProvider` and `PresentationProvider`.
+  - A call without `provider` sends exactly the v1 snapshot, byte for byte.
+  - Requires an ingest that accepts v1.1: the schema is closed, so an ingest that only knows v1 rejects a snapshot carrying a v1.1 field or value.
+
+### Changed
+- `@rocapine/rocalytics-sdk/paywall`: `PaywallPresentationInfo.moment` and `paywallId` are optional (required with provider `studio`), and `audienceId` is optional (absent is sent as null). On the snapshot types, `PresentationPaywall.moment_key` and `paywall_id` are optional, and `PresentationSurface` and `render_mode` are wider. Code reading `moment_key` or `paywall_id` as a `string`, or switching exhaustively over `surface` or `render_mode`, needs updating.
+
 ## [0.3.0] - 2026-10-13
 ### Added
 - `@rocapine/rocalytics-sdk/client`: the `identifyOnStart` option of `RocalyticsClient`, default `true` (unchanged behaviour).
