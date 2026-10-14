@@ -40,7 +40,7 @@ export interface PaywallPresentationInfo {
   placement?: string;
   /** The non-Studio paywall's id: the service's paywall identifier, or the app's own variant key for `native`. Required when `provider` is `external` or `native`. */
   externalPaywallId?: string;
-  /** Free text naming the paywall service, 1 to 32 characters. */
+  /** Free text naming the paywall service, 1 to 32 UTF-8 bytes. */
   providerName?: string;
 }
 

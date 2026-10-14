@@ -130,3 +130,51 @@ describe("contract v1.1: external and native presentations", () => {
     expect(diagnostics[0].message).toContain(field);
   });
 });
+
+// The ingest caps ids in UTF-8 bytes (128, and 32 for provider_name) and rejects
+// NUL and lone surrogates (contract section 5). A rejection is permanent and loses
+// the whole presentation, purchase included, so start() must refuse these first.
+describe("contract v1.1: start() refuses what the ingest would reject", () => {
+  const STUDIO = { moment: "m", paywallId: "p", audienceId: null, renderMode: "custom", billing: "store", surface: "present" } as const;
+  it.each([
+    ["a provider name over 32 bytes", { ...EXTERNAL, providerName: "日本".repeat(6) }, "providerName"],
+    ["a placement over 128 bytes", { ...EXTERNAL, placement: "日".repeat(50) }, "placement"],
+    ["an external id over 128 bytes", { ...NATIVE, externalPaywallId: "é".repeat(100) }, "externalPaywallId"],
+    ["a placement with a lone surrogate", { ...EXTERNAL, placement: "abc\uD800" }, "placement"],
+    ["an external id with a NUL", { ...NATIVE, externalPaywallId: "a\u0000b" }, "externalPaywallId"],
+    ["a v1 moment over 128 bytes", { ...STUDIO, moment: "日".repeat(50) }, "moment"],
+    ["a v1 moment with a lone surrogate", { ...STUDIO, moment: "a\uD800" }, "moment"],
+    ["a v1 paywallId with a lone low surrogate", { ...STUDIO, paywallId: "\uDC00a" }, "paywallId"],
+    ["a v1 audienceId over 128 bytes", { ...STUDIO, audienceId: "é".repeat(65) }, "audienceId"],
+    ["a v1 variantKey with a NUL", { ...STUDIO, variantKey: "\u0000" }, "variantKey"],
+    ["a v1 deploymentId over 128 bytes", { ...STUDIO, deploymentId: "x".repeat(129) }, "deploymentId"],
+  ])("refuses %s with invalid-info, sending nothing", async (_name, info, field) => {
+    const { time, sink, diagnostics, tracker } = setup();
+    expect(tracker.start(info as never)).toBeUndefined();
+    await time.advance(0);
+    expect(sink.received).toHaveLength(0);
+    expect(diagnostics.map((d) => d.code)).toEqual(["invalid-info"]);
+    expect(diagnostics[0].message).toContain(field);
+  });
+
+  it("accepts a 128-byte ASCII id and a 126-byte CJK id", async () => {
+    const [s] = await runOnce({ ...EXTERNAL, placement: "a".repeat(128), externalPaywallId: "日".repeat(42), providerName: "日本".repeat(5) + "ab" });
+    expect(s.paywall).toMatchObject({ placement: "a".repeat(128), external_paywall_id: "日".repeat(42) });
+    const [v1] = await runOnce({ ...STUDIO, moment: "日".repeat(42), paywallId: "a".repeat(128) });
+    expect(v1.paywall).toMatchObject({ moment_key: "日".repeat(42), paywall_id: "a".repeat(128) });
+  });
+
+  it("accepts a valid surrogate pair (4 bytes)", async () => {
+    const [s] = await runOnce({ ...NATIVE, externalPaywallId: "😀".repeat(32) });
+    expect(s.paywall.external_paywall_id).toBe("😀".repeat(32));
+  });
+
+  it("drops a store id the ingest would reject instead of losing the purchase", async () => {
+    const env = setup();
+    const h = env.tracker.start(NATIVE)!;
+    h.end({ status: "purchased", transaction: { originalTransactionIdentifier: "a\uD800", productId: "é".repeat(513), purchaseToken: "ok" } });
+    await env.time.advance(0);
+    const last = env.sink.received.at(-1)!;
+    expect(last.outcome).toEqual({ status: "purchased", transaction: { purchase_token: "ok" } });
+  });
+});

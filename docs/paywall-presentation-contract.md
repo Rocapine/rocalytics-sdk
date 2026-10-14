@@ -129,9 +129,9 @@ All timestamps have exactly three fractional digits (onboarding D24). A snapshot
 
 - `ignored` when the stored snapshot is already `ended` (P5), or when the incoming `seq` is not higher than the stored one.
 - `rejected` when the snapshot fails the schema or section 4, exceeds 16 KiB, or changes an immutable field (P6).
-
-The server checks the `paywall` string fields' lengths in UTF-8 bytes, not characters: 128 bytes for the ids, 32 for `provider_name`. A value within the character limit but over the byte limit, which only multibyte text can be, is `rejected`.
 - `accepted` otherwise: the snapshot replaces the stored one.
+
+The server checks the `paywall` string fields' lengths in UTF-8 bytes, not characters: 128 bytes for the ids, 32 for `provider_name`. A value within the character limit but over the byte limit, which only multibyte text can be, is `rejected`. So is a snapshot holding a U+0000 or a lone surrogate in any string. The SDK's tracker checks the `paywall` ids and `provider_name` by these rules: `start()` refuses a value that breaks them as `invalid-info` and sends nothing. A store id in `transaction` that breaks them, or its 1024-byte limit, is left out rather than sent. The `context` strings are not checked this way.
 
 **Outcomes and retries.** As onboarding D27: the outcome is always in the response body, on a 2xx and on a 4xx alike. A response without an outcome, and no response at all, are transient and retried with backoff. `accepted`, `ignored` and `rejected` settle the snapshot for good.
 

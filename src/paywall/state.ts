@@ -1,15 +1,19 @@
 import type { WireRunContext } from "../core/context";
+import { hasBadText, utf8ByteLength } from "../core/text";
 import { toTimestamp } from "../core/time";
 import type { PaywallPresentationSnapshot, PresentationOutcome, PresentationPaywall, PresentationProvider, PresentationSurface, PresentationTransaction } from "./contract";
 import type { PaywallPresentationEnd, PaywallPresentationInfo, PaywallTransactionInfo } from "./observer";
 
 const OUTCOMES = new Set(["purchased", "dismissed", "cancelled", "error"]);
-const id = (v: unknown) => typeof v === "string" && v.length >= 1 && v.length <= 128;
-const shortText = (v: unknown) => typeof v === "string" && v.length >= 1 && v.length <= 32;
+// Limits in UTF-8 bytes, and no NUL or lone surrogate: the ingest's rules (contract section 5).
+// A value the ingest rejects is rejected for good, with the whole presentation.
+const text = (v: unknown, maxBytes: number): v is string => typeof v === "string" && v.length >= 1 && utf8ByteLength(v) <= maxBytes && !hasBadText(v);
+const id = (v: unknown) => text(v, 128);
+const shortText = (v: unknown) => text(v, 32);
 const PROVIDERS = ["studio", "external", "native"];
 const SURFACES = ["present", "paywall_step", "placement"];
 const RENDER_MODES = ["elements", "custom", "external"];
-const storeId = (v: unknown): v is string => typeof v === "string" && v.length >= 1 && v.length <= 1024;
+const storeId = (v: unknown): v is string => text(v, 1024);
 const KEY = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -23,15 +27,15 @@ export function validateInfo(info: unknown): string[] {
   const provider = i.provider ?? "studio";
   const required = provider === "studio" ? ["moment", "paywallId"] : provider === "external" ? ["placement", "externalPaywallId"] : provider === "native" ? ["externalPaywallId"] : [];
   for (const k of ["moment", "paywallId", "placement", "externalPaywallId"]) {
-    if (required.includes(k) ? !id(i[k]) : i[k] !== undefined && !id(i[k])) errors.push(`${k} must be 1 to 128 characters${required.includes(k) ? ` (required with provider ${provider})` : ""}`);
+    if (required.includes(k) ? !id(i[k]) : i[k] !== undefined && !id(i[k])) errors.push(`${k} must be 1 to 128 UTF-8 bytes, with no NUL or lone surrogate${required.includes(k) ? ` (required with provider ${provider})` : ""}`);
   }
-  if (i.providerName !== undefined && !shortText(i.providerName)) errors.push("providerName must be 1 to 32 characters");
-  if (i.audienceId !== undefined && i.audienceId !== null && !id(i.audienceId)) errors.push("audienceId must be null or 1 to 128 characters");
+  if (i.providerName !== undefined && !shortText(i.providerName)) errors.push("providerName must be 1 to 32 UTF-8 bytes, with no NUL or lone surrogate");
+  if (i.audienceId !== undefined && i.audienceId !== null && !id(i.audienceId)) errors.push("audienceId must be null or 1 to 128 UTF-8 bytes, with no NUL or lone surrogate");
   if (!RENDER_MODES.includes(i.renderMode as string)) errors.push("renderMode must be elements, custom or external");
   if (i.billing !== "store" && i.billing !== "stripe") errors.push("billing must be store or stripe");
   if (!SURFACES.includes(i.surface as string)) errors.push("surface must be present, paywall_step or placement");
-  if (i.variantKey !== undefined && !id(i.variantKey)) errors.push("variantKey must be 1 to 128 characters");
-  if (i.deploymentId !== undefined && !id(i.deploymentId)) errors.push("deploymentId must be 1 to 128 characters");
+  if (i.variantKey !== undefined && !id(i.variantKey)) errors.push("variantKey must be 1 to 128 UTF-8 bytes, with no NUL or lone surrogate");
+  if (i.deploymentId !== undefined && !id(i.deploymentId)) errors.push("deploymentId must be 1 to 128 UTF-8 bytes, with no NUL or lone surrogate");
   const run = i.onboardingRun as { runId?: unknown; stepKey?: unknown } | undefined;
   if (run !== undefined && (typeof run !== "object" || run === null || typeof run.runId !== "string" || !UUID.test(run.runId) || typeof run.stepKey !== "string" || !KEY.test(run.stepKey))) {
     errors.push("onboardingRun must be { runId: lowercase UUID, stepKey: key }");
