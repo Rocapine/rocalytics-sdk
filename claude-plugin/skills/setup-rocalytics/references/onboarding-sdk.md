@@ -5,9 +5,11 @@ Only when the scan found it missing. This is the minimum the trackers need; if t
 ## Install
 
 ```sh
-npx expo install @rocapine/react-native-onboarding @rocapine/react-native-onboarding-ui expo-application expo-font expo-image expo-router
+npx expo install @rocapine/react-native-onboarding @rocapine/react-native-onboarding-ui
 npm ls @rocapine/react-native-onboarding   # must be >= 1.76.0
 ```
+
+Then install only the peers that are missing (`expo-application`, `expo-font`, `expo-image`; check the installed `package.json` `peerDependencies`). **Never add `expo-router` to a react-navigation app** — without it the package's navigation adapter is a no-op; pass `OnboardingProvider` a `navigation` adapter instead.
 
 A `401` means the `@rocapine` registry isn't configured: run `rocapine doctor --fix` (Rocapine CLI), don't hand-edit `~/.npmrc`. Then read `node_modules/@rocapine/react-native-onboarding/README.md` for peer requirements of the installed version.
 

@@ -102,9 +102,17 @@ const onContinue = (value?: unknown) => {
 };
 ```
 
+**Where the answers really are.** Routes differ; find the one place the step's answer becomes known and report it there:
+
+- The route passes the answer to its own handler (`goNext(answers)` → `handleAnswers(step.id, answers)`, as in Eve): call `exitStep` in that handler, mapping the app's answer shape with `toAnswer`.
+- `onContinue(value)` with `step.variableName` (as in the package example): the snippet above.
+- Composable screens that write through `setVariable(name, { value, label?, kind? })`: those never reach `onContinue`. Snapshot `getVariables()` (from `OnboardingProgressContext`) on focus, and on exit report each key whose entry changed, using `entry.value`, never `entry.label`.
+
+If the route uses expo-router directly, `useFocusEffect` from `expo-router` works as well as the adapter.
+
 Then:
 
-- In `OnboardingProvider`'s `onComplete`: call `completeOnboardingRun()` **first**, then the app's existing completion logic.
+- **Completion**, where the app actually ends the flow: `OnboardingProvider`'s `onComplete`, or the route's last-step branch (`isLastStep` / `resolveNextStepNumber(...) === null`). Call `completeOnboardingRun()` **first**, then the existing logic — and delete any `captureEvent`/`track("onboarding_completed")` meant for Rocalytics there.
 - In the root layout, an `AppState` listener: on `"background"` call `backgroundOnboardingRun()`.
 - **Resume:** react-native-onboarding restarts the flow on a cold start, so a new run is correct — do not call `resume()`. Only if the app restores the user's position itself, race `onboardingRun.resume()` against a ~3 s timeout (README, *A hand-coded onboarding*) before `start()`.
 - If old reporting used other step keys than Studio step ids, map them (`stepKey: legacyKey[s.id] ?? s.id`) in **both** the manifest and `enterStep`/`exitStep`.

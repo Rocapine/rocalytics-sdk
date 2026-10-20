@@ -28,6 +28,7 @@ Record, for the plan you show the user:
 | RevenueCat direct | `react-native-purchases` with `purchasePackage` / `purchaseStoreProduct` in app code |
 | Native paywalls on RevenueCat | `PaywallProvider` with `customScreens`, screens buying through RevenueCat |
 | Studio composable paywalls | `PaywallProvider` with `productProvider={revenueCatProductProvider(...)}` |
+| Superwall **on** RevenueCat | a Superwall `PurchaseController` that calls `Purchases.purchase*`. These purchases belong to Superwall: report them from the delegate **only**, never also after the RevenueCat call — the two send different transaction ids, so dedup cannot catch the double count |
 | **Existing purchase pipeline** | one function every purchase already goes through (e.g. `recordConversion`). Wire Rocalytics **into it**, never beside it |
 | **react-native-onboarding** | installed? version ≥ **1.76.0** (first with `PaywallProvider` `observer`)? `-ui` installed? |
 | **Onboarding shape** | Studio flow (`OnboardingProvider` + a step route calling `useOnboardingStep`), hand-coded screens, or none |

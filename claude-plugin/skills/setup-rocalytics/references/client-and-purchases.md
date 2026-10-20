@@ -62,11 +62,13 @@ In the `SuperwallDelegate` subclass (create `services/superwall/superwall.delega
 ```ts
 case EventType.transactionComplete: {
   const { product, transaction } = eventInfo.event;
-  if (product && transaction) {
+  // No currency → no call: a guessed currency is wrong revenue. Report it instead.
+  if (product && transaction && !product.currencyCode) reportError(new Error("[rocalytics] purchase without currencyCode"));
+  else if (product && transaction) {
     rocalytics.trackPurchase({
       isTrial: product.hasFreeTrial ?? false,
       value: product.price,
-      currency: product.currencyCode ?? "USD",
+      currency: product.currencyCode,
       originalTransactionIdentifier: transaction.originalTransactionIdentifier,
       product,
       transaction,
