@@ -7,7 +7,8 @@ import { describe, expect, it } from "vitest";
 import { toOnboardingRunBody } from "../src/client";
 import { wellFormedText } from "../src/core/text";
 import { badText } from "./contract";
-import { harness, IDENTITY, MANIFEST } from "./harness";
+import { ManualTime } from "./fakes";
+import { harness, IDENTITY, MANIFEST, type Harness } from "./harness";
 
 describe("wellFormedText", () => {
   it("the ingest's check, used below, does catch bad text", () => {
@@ -121,12 +122,67 @@ describe("text the ingest would reject", () => {
     expect(h.diagnostics.map((d) => d.code)).toContain("invalid-answer");
   });
 
-  it("a context string with bad text refuses the start", async () => {
-    const h = harness({ context: { appVersion: "2.4\u0000", build: "1", platform: "ios", osVersion: "18", locale: "en", timezone: "UTC" } });
+  it("context strings with bad text are repaired, never refused", async () => {
+    const h = harness({ context: { appVersion: "2.4\u0000", build: "\uD800", platform: "ios", osVersion: "\u0000", locale: "en", timezone: "UTC" } });
     const run = h.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
     run.enterStep("goal");
     await h.tick();
-    expect(h.sink.received).toHaveLength(0);
-    expect(h.diagnostics.map((d) => d.code)).toContain("invalid-start");
+    const snap = h.sink.last!;
+    expect(snap.context).toMatchObject({ app_version: "2.4", build: "�", os_version: "�" });
+    expect(badText(toOnboardingRunBody(snap))).toBe(false);
+    expect(h.diagnostics.filter((d) => d.code === "text-repaired")).toHaveLength(3);
+    expect(h.diagnostics.map((d) => d.code)).not.toContain("invalid-start");
+  });
+});
+
+describe("stored state an earlier build wrote with bad text", () => {
+  const T0 = Date.parse("2026-01-10T08:00:00.000Z");
+  /** Replaces the marker in everything stored with a lone surrogate, as an earlier build would have written it. */
+  function plantBadText(h: Harness) {
+    for (const [k, v] of Object.entries(h.storage.dump())) h.storage.setItem(k, v.split("MARK").join("\\ud83d"));
+  }
+
+  it("a resumed run is repaired before it is sent", async () => {
+    const a = harness();
+    const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("goal");
+    run.exitStep("goal", { answers: [{ questionKey: "name", kind: "text", value: "ZoéMARK" }] });
+    run.enterStep("experience");
+    await a.tick();
+    await a.tracker.idle();
+    a.kill();
+    plantBadText(a);
+
+    const b = harness({ storage: a.storage, time: new ManualTime(T0 + 600_000) });
+    const resumed = await b.tracker.resume();
+    expect(resumed).not.toBeNull();
+    resumed!.complete();
+    await b.tick(0);
+    expect(b.sink.received.length).toBeGreaterThan(0);
+    for (const body of b.sink.received) expect(badText(toOnboardingRunBody(body))).toBe(false);
+    expect(b.sink.last!.steps[0].answers).toEqual([{ question_key: "name", kind: "text", value: "Zoé�" }]);
+    expect(b.sink.last!.status).toBe("completed");
+    expect(b.diagnostics.map((d) => d.code)).toContain("text-repaired");
+  });
+
+  it("an unsent stored snapshot is repaired before it is sent", async () => {
+    const a = harness();
+    a.sink.respond = () => ({ outcome: "transient" });
+    const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
+    run.enterStep("goal");
+    run.exitStep("goal", { answers: [{ questionKey: "name", kind: "text", value: "ZoéMARK" }] });
+    run.complete();
+    await a.tick(1000);
+    await a.tracker.idle();
+    a.kill();
+    plantBadText(a);
+
+    const b = harness({ storage: a.storage, time: new ManualTime(T0 + 600_000) });
+    await b.tick(0);
+    expect(b.sink.received.length).toBeGreaterThan(0);
+    for (const body of b.sink.received) expect(badText(toOnboardingRunBody(body))).toBe(false);
+    expect(b.sink.received[0].status).toBe("completed");
+    expect(b.sink.received[0].steps[0].answers[0]).toEqual({ question_key: "name", kind: "text", value: "Zoé�" });
+    expect(b.diagnostics.map((d) => d.code)).toContain("text-repaired");
   });
 });

@@ -4,7 +4,7 @@ import { consoleDiagnostics, safeDiagnostics, type DiagnosticHandler } from "../
 import { createUuid } from "../core/ids";
 import type { Sink } from "../core/sink";
 import { createSerialStore, type KeyValueStorage, type SerialStore } from "../core/storage";
-import { hasBadText } from "../core/text";
+import { hasBadText, wellFormedText } from "../core/text";
 import { systemClock, systemTimers, type Clock, type Timers } from "../core/time";
 import { LIBRARY_VERSION } from "../version";
 import type { OnboardingRunSnapshot, Properties } from "./contract";
@@ -342,10 +342,14 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
               message: `the stored state has format ${format}, which this version does not know: it is left untouched, and this session runs without persistence`,
             });
           }
-          const { current, outboxes: stored, problems } = parsePersisted(raw);
+          const { current, outboxes: stored, problems, repaired } = parsePersisted(raw);
           if (problems.length) {
             rewrite = true;
             report({ code: "storage", message: `${problems.join("; ")}: discarded` });
+          }
+          if (repaired.length) {
+            rewrite = true;
+            report({ code: "text-repaired", message: `${repaired.join("; ")}: a U+0000 or a lone surrogate was removed or replaced with U+FFFD` });
           }
           // What is left, written for another destination: never sent here, so discarded.
           if (destinationChanged || (raw as { destination?: unknown }).destination !== destination) {
@@ -727,6 +731,23 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
     }
   }
 
+  /**
+   * The context with a NUL or a lone surrogate in `appVersion`, `build` or
+   * `osVersion` repaired and reported: the ingest rejects one anywhere, and a
+   * device string must never cost the run. Text left empty becomes U+FFFD.
+   */
+  function repairContext(input: RunContextInput): RunContextInput {
+    if (!input || typeof input !== "object") return input;
+    const out = { ...input };
+    for (const field of ["appVersion", "build", "osVersion"] as const) {
+      const v: unknown = out[field];
+      if (typeof v !== "string" || !hasBadText(v)) continue;
+      report({ code: "text-repaired", message: `context.${field}: a U+0000 or a lone surrogate was removed or replaced with U+FFFD` });
+      out[field] = wellFormedText(v) || "\uFFFD";
+    }
+    return out;
+  }
+
   return {
     start(options) {
       try {
@@ -738,14 +759,10 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
           report({ code: "invalid-start", message: `the context function threw: ${String(e)}` });
           return inertRun(mintRunId());
         }
-        const context = captureRunContext(contextInput, LIBRARY_VERSION);
+        const context = captureRunContext(repairContext(contextInput), LIBRARY_VERSION);
         const valid = validateStart(options);
         const errors = [...(context.ok ? [] : context.errors), ...(valid.ok ? [] : valid.errors)];
-        // The ingest rejects a NUL or a lone surrogate anywhere; the app's own facts are refused, not repaired.
-        if (context.ok && [context.context.app_version, context.context.build, context.context.os_version].some((v) => v !== null && hasBadText(v))) {
-          errors.push("appVersion, build and osVersion must hold no U+0000 or lone surrogate");
-        }
-        if (!context.ok || !valid.ok || errors.length) {
+        if (!context.ok || !valid.ok) {
           report({ code: "invalid-start", message: `run not started, nothing will be sent: ${errors.join("; ")}` });
           return inertRun(mintRunId());
         }

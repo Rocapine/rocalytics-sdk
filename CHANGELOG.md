@@ -7,12 +7,24 @@ The format follows Keep a Changelog, and the project follows Semantic Versioning
 Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.0 is released, the entries before it may be truncated from this file.
 
 ## [Unreleased]
+### Added
+- `@rocapine/rocalytics-sdk/onboarding`: `resume(expected?: StartOptions)`. With the options the app would pass to `start`, a killed run of another onboarding identity (key, version, variant) or manifest is not resumed: it resolves null with a `resume-mismatch` diagnostic, so `start` begins a new run rather than merging a Studio-served flow and a bundled fallback into one. Without them, unchanged.
+
+### Changed
+- `@rocapine/rocalytics-sdk/client`: `createRocalyticsOnboardingSink` posts the onboarding run contract v1 snapshot to `/onboarding-response` (new `toOnboardingRunBody`), so an ingest that reads v1 stores each run under its own `run_id`, with its onboarding key and version, `seq`, `status`, Studio ids and `context.library_version`. Before, all of that was only inside `onboarding_metadata`, and the run landed as the sender's single `legacy` row.
+  - The body still carries the pre-v1 `responses` and `onboarding_metadata` beside the snapshot, so an ingest that reads only the pre-v1 shape keeps storing runs as before. A v1 ingest must drop those two keys before its size and schema checks.
+  - They are left out of a body they would take past 256 KiB. The pre-v1 ingest answers that body 400, which is transient: the tracker keeps the snapshot until an ingest that reads v1 takes it.
+  - `sent_at` stays the pre-v1 one, the run's latest recorded timestamp plus `seq` milliseconds.
+  - New exported type `OnboardingRunRequestBody`; `buildOnboardingResponseRequest` accepts it.
+
 ### Fixed
-- `@rocapine/rocalytics-sdk/onboarding`: a text answer, a property string or a Studio link holding a U+0000 or a lone surrogate (an emoji cut in half by a field's `maxLength`, for example) is repaired rather than sent as is: a lone surrogate becomes U+FFFD, a U+0000 is removed, and a `text-repaired` diagnostic is reported. Before, the ingest rejected the snapshot for good (`string_encoding`), and, snapshots being cumulative, every later one of the run too, completion included. A question key holding one is refused as `invalid-answer`, as any invalid key is; an `appVersion`, `build` or `osVersion` holding one now refuses the start as `invalid-start`.
+- `@rocapine/rocalytics-sdk/onboarding`: text the ingest rejects for good (`string_encoding`), a U+0000 or a lone surrogate such as an emoji cut in half by a field's `maxLength`, is repaired rather than sent as is: a lone surrogate becomes U+FFFD, a U+0000 is removed, and a `text-repaired` diagnostic is reported. Before, the snapshot was rejected, and, snapshots being cumulative, every later one of the run too, completion included.
+  - Repaired: text answers, property strings, Studio links, and the context's `appVersion`, `build` and `osVersion` (one left empty becomes U+FFFD, so the run still starts).
+  - A run or unsent snapshot an earlier version stored with such text is repaired as it is read back, before it is sent.
+  - A question key holding one is still refused as `invalid-answer`, as any invalid key is.
 
 ## [0.4.0] - unreleased
 ### Added
-- `@rocapine/rocalytics-sdk/onboarding`: `resume(expected?: StartOptions)`. With the options the app would pass to `start`, a killed run of another onboarding identity (key, version, variant) or manifest is not resumed: it resolves null with a `resume-mismatch` diagnostic, so `start` begins a new run rather than merging a Studio-served flow and a bundled fallback into one. Without them, unchanged.
 - `@rocapine/rocalytics-sdk/paywall`: paywall presentation contract v1.1, additive, `schema_version` still 1. The tracker now reports paywalls the Studio does not serve.
   - `PaywallPresentationInfo` gains optional `provider` (`"studio" | "external" | "native"`, absent meaning `studio`), `placement`, `externalPaywallId` and `providerName`. `surface` gains `"placement"` and `renderMode` gains `"external"`.
   - They are sent as `provider`, `paywall.placement`, `paywall.external_paywall_id` and `paywall.provider_name`. An absent optional field is left out, never sent as null.
@@ -23,11 +35,6 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
   - Requires an ingest that accepts v1.1: the schema is closed, so an ingest that only knows v1 rejects a snapshot carrying a v1.1 field or value.
 
 ### Changed
-- `@rocapine/rocalytics-sdk/client`: `createRocalyticsOnboardingSink` posts the onboarding run contract v1 snapshot to `/onboarding-response` (new `toOnboardingRunBody`), so an ingest that reads v1 stores each run under its own `run_id`, with its onboarding key and version, `seq`, `status`, Studio ids and `context.library_version`. Before, all of that was only inside `onboarding_metadata`, and the run landed as the sender's single `legacy` row.
-  - The body still carries the pre-v1 `responses` and `onboarding_metadata` beside the snapshot, so an ingest that reads only the pre-v1 shape keeps storing runs as before. A v1 ingest must drop those two keys before its size and schema checks.
-  - They are left out of a body they would take past 256 KiB. The pre-v1 ingest answers that body 400, which is transient: the tracker keeps the snapshot until an ingest that reads v1 takes it.
-  - `sent_at` stays the pre-v1 one, the run's latest recorded timestamp plus `seq` milliseconds.
-  - New exported type `OnboardingRunRequestBody`; `buildOnboardingResponseRequest` accepts it.
 - `@rocapine/rocalytics-sdk/paywall`: `PaywallPresentationInfo.moment` and `paywallId` are optional (required with provider `studio`), and `audienceId` is optional (absent is sent as null). On the snapshot types, `PresentationPaywall.moment_key` and `paywall_id` are optional, and `PresentationSurface` and `render_mode` are wider. Code reading `moment_key` or `paywall_id` as a `string`, or switching exhaustively over `surface` or `render_mode`, needs updating.
 
 ## [0.3.0] - 2026-10-13
