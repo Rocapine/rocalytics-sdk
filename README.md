@@ -32,7 +32,7 @@ The package is for tracking only: it holds no remote-control code. `/onboarding`
 This file is [`examples/hand-coded-onboarding.ts`](examples/hand-coded-onboarding.ts), type-checked and run by the test suite:
 
 ```ts
-import { createHttpSink, onboardingRun, type KeyValueStorage, type OnboardingRun } from "@rocapine/rocalytics-sdk/onboarding";
+import { createHttpSink, onboardingRun, type KeyValueStorage, type OnboardingRun, type StartOptions } from "@rocapine/rocalytics-sdk/onboarding";
 
 // 1. Once, at app startup.
 export function setUpTracking(storage: KeyValueStorage, device: { appVersion: string; build: string; osVersion: string }) {
@@ -56,32 +56,35 @@ export function setUpTracking(storage: KeyValueStorage, device: { appVersion: st
 // 2. When the onboarding opens: resume the killed run if the app restores
 //    the user's position, otherwise start a new one. resume() waits for
 //    storage however long it takes, so stop waiting after a few seconds.
+const MAIN: StartOptions = {
+  onboarding: { key: "main", version: "3" },
+  // Every screen the flow can show, in order. Alternatives at one position share a slot.
+  manifest: {
+    steps: [
+      { stepKey: "welcome" },
+      { stepKey: "goal" },
+      { stepKey: "level_beginner", slot: "level" },
+      { stepKey: "level_advanced", slot: "level" },
+      { stepKey: "notifications" },
+      { stepKey: "done" },
+    ],
+  },
+  properties: { signup_source: "email" },
+};
+
 export async function openOnboarding(restorePosition: boolean, resumeTimeoutMs = 3000): Promise<OnboardingRun> {
-  const resumed = restorePosition ? await resumeWithin(resumeTimeoutMs) : null;
+  // Passing the options resumes only a killed run of this same onboarding.
+  const resumed = restorePosition ? await resumeWithin(MAIN, resumeTimeoutMs) : null;
   // Resumed: show the screen your own navigation state restored. The tracker
   // records it as a new entry for its last recorded step (none if truncated).
   if (resumed) return resumed;
-  return onboardingRun.start({
-    onboarding: { key: "main", version: "3" },
-    // Every screen the flow can show, in order. Alternatives at one position share a slot.
-    manifest: {
-      steps: [
-        { stepKey: "welcome" },
-        { stepKey: "goal" },
-        { stepKey: "level_beginner", slot: "level" },
-        { stepKey: "level_advanced", slot: "level" },
-        { stepKey: "notifications" },
-        { stepKey: "done" },
-      ],
-    },
-    properties: { signup_source: "email" },
-  });
+  return onboardingRun.start(MAIN);
 }
 
-function resumeWithin(ms: number): Promise<OnboardingRun | null> {
+function resumeWithin(options: StartOptions, ms: number): Promise<OnboardingRun | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<null>((resolve) => (timer = setTimeout(() => resolve(null), ms)));
-  return Promise.race([onboardingRun.resume(), timeout]).finally(() => clearTimeout(timer));
+  return Promise.race([onboardingRun.resume(options), timeout]).finally(() => clearTimeout(timer));
 }
 
 // 3. Each screen reports when it is shown and when the user leaves it.
@@ -175,7 +178,9 @@ onboardingRun.start({
 
 No method throws. Anything the tracker declines to do is reported through `onDiagnostic` instead.
 
-### `onboardingRun.resume(): Promise<OnboardingRun | null>`
+### `onboardingRun.resume(expected?: StartOptions): Promise<OnboardingRun | null>`
+
+Pass `expected`, the options you would pass to `start` for the onboarding the app is about to show. A run belongs to one onboarding: if the killed run has another onboarding identity (key, version, variant) or another manifest, for example a Studio-served flow on one launch and the app's bundled fallback on the next, `resume(expected)` resolves null and reports `resume-mismatch`, so your `start` begins a new run instead of merging the two. Without `expected` it resumes whatever run was killed.
 
 After the app was killed mid-onboarding, `resume()` returns the run that was in progress, if the app restores the user's position. The run keeps its `run_id` and continues its `seq`. The tracker:
 

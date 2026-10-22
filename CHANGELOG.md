@@ -9,6 +9,7 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
 ## [Unreleased]
 ## [0.4.0] - unreleased
 ### Added
+- `@rocapine/rocalytics-sdk/onboarding`: `resume(expected?: StartOptions)`. With the options the app would pass to `start`, a killed run of another onboarding identity (key, version, variant) or manifest is not resumed: it resolves null with a `resume-mismatch` diagnostic, so `start` begins a new run rather than merging a Studio-served flow and a bundled fallback into one. Without them, unchanged.
 - `@rocapine/rocalytics-sdk/paywall`: paywall presentation contract v1.1, additive, `schema_version` still 1. The tracker now reports paywalls the Studio does not serve.
   - `PaywallPresentationInfo` gains optional `provider` (`"studio" | "external" | "native"`, absent meaning `studio`), `placement`, `externalPaywallId` and `providerName`. `surface` gains `"placement"` and `renderMode` gains `"external"`.
   - They are sent as `provider`, `paywall.placement`, `paywall.external_paywall_id` and `paywall.provider_name`. An absent optional field is left out, never sent as null.

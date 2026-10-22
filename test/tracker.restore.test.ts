@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { memoryStorage } from "../src/core";
+import type { StartOptions } from "../src/onboarding";
 import { accept } from "./contract";
 import { ManualTime } from "./fakes";
 import { IDENTITY, MANIFEST, harness, type Harness } from "./harness";
@@ -230,5 +231,50 @@ describe("resume after relaunch (3.2)", () => {
     const run = h.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST });
     run.enterStep("welcome");
     expect(await h.tracker.resume()).toBeNull();
+  });
+});
+
+describe("resume(expected): a run is scoped to one onboarding", () => {
+  const STUDIO: StartOptions = { studio: { onboardingId: "42", deploymentId: "7" }, manifest: { steps: [{ stepKey: "intro" }, { stepKey: "paywall" }] } };
+  const BUNDLED: StartOptions = { onboarding: { key: "bundled", version: "1" }, manifest: { steps: [{ stepKey: "welcome" }, { stepKey: "done" }] } };
+
+  /** A run of `options` with one entry, then the app is killed and relaunched. */
+  async function killedRunOf(options: StartOptions, stepKey: string) {
+    const a = harness();
+    const run = a.tracker.start(options);
+    run.enterStep(stepKey);
+    await a.tick();
+    await kill(a);
+    return { runId: run.runId, b: relaunch(a, 600) };
+  }
+
+  it("resumes the killed run when the app is about to show the same onboarding", async () => {
+    const { runId, b } = await killedRunOf(STUDIO, "intro");
+    const resumed = await b.tracker.resume(STUDIO);
+    expect(resumed?.runId).toBe(runId);
+  });
+
+  it.each([
+    ["a Studio-served run, then the bundled fallback", STUDIO, "intro", BUNDLED],
+    ["the bundled fallback, then a Studio-served run", BUNDLED, "welcome", STUDIO],
+    ["a Studio-served run, then a new deployment of it", STUDIO, "intro", { ...STUDIO, studio: { onboardingId: "42", deploymentId: "8" } }],
+    ["the same onboarding with another manifest", BUNDLED, "welcome", { ...BUNDLED, manifest: { steps: [{ stepKey: "welcome" }, { stepKey: "goal" }, { stepKey: "done" }] } }],
+  ] as [string, StartOptions, string, StartOptions][])("%s: resolves null, and start() begins a new run_id", async (_name, before, stepKey, after) => {
+    const { runId, b } = await killedRunOf(before, stepKey);
+    expect(await b.tracker.resume(after)).toBeNull();
+    expect(b.diagnostics.map((d) => d.code)).toContain("resume-mismatch");
+    const fresh = b.tracker.start(after);
+    expect(fresh.runId).not.toBe(runId);
+    fresh.enterStep(after.manifest.steps[0].stepKey);
+    await b.tick(0);
+    expect(b.sink.received.filter((s) => s.run_id === fresh.runId).flatMap((s) => s.steps.map((e) => e.step_key))).toEqual([
+      after.manifest.steps[0].stepKey,
+    ]);
+    expect(b.sink.received.filter((s) => s.run_id === runId).every((s) => s.steps.every((e) => e.step_key === stepKey))).toBe(true);
+  });
+
+  it("without expected options, resumes whatever run was killed, as before", async () => {
+    const { runId, b } = await killedRunOf(BUNDLED, "welcome");
+    expect((await b.tracker.resume())?.runId).toBe(runId);
   });
 });
