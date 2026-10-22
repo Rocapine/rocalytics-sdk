@@ -7,6 +7,9 @@ The format follows Keep a Changelog, and the project follows Semantic Versioning
 Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.0 is released, the entries before it may be truncated from this file.
 
 ## [Unreleased]
+### Fixed
+- `@rocapine/rocalytics-sdk/onboarding`: a text answer, a property string or a Studio link holding a U+0000 or a lone surrogate (an emoji cut in half by a field's `maxLength`, for example) is repaired rather than sent as is: a lone surrogate becomes U+FFFD, a U+0000 is removed, and a `text-repaired` diagnostic is reported. Before, the ingest rejected the snapshot for good (`string_encoding`), and, snapshots being cumulative, every later one of the run too, completion included. A question key holding one is refused as `invalid-answer`, as any invalid key is; an `appVersion`, `build` or `osVersion` holding one now refuses the start as `invalid-start`.
+
 ## [0.4.0] - unreleased
 ### Added
 - `@rocapine/rocalytics-sdk/onboarding`: `resume(expected?: StartOptions)`. With the options the app would pass to `start`, a killed run of another onboarding identity (key, version, variant) or manifest is not resumed: it resolves null with a `resume-mismatch` diagnostic, so `start` begins a new run rather than merging a Studio-served flow and a bundled fallback into one. Without them, unchanged.

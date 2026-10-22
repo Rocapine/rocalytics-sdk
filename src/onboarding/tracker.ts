@@ -4,6 +4,7 @@ import { consoleDiagnostics, safeDiagnostics, type DiagnosticHandler } from "../
 import { createUuid } from "../core/ids";
 import type { Sink } from "../core/sink";
 import { createSerialStore, type KeyValueStorage, type SerialStore } from "../core/storage";
+import { hasBadText } from "../core/text";
 import { systemClock, systemTimers, type Clock, type Timers } from "../core/time";
 import { LIBRARY_VERSION } from "../version";
 import type { OnboardingRunSnapshot, Properties } from "./contract";
@@ -690,8 +691,10 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
         const answers = [];
         for (const input of raw) {
           const r = toAnswer(input);
-          if (r.ok) answers.push(r.answer);
-          else this.diag("invalid-answer", r.error);
+          if (r.ok) {
+            answers.push(r.answer);
+            for (const [code, message] of r.warnings ?? []) this.diag(code, message);
+          } else this.diag("invalid-answer", r.error);
         }
         this.apply(exit(this.state, index, answers, this.now()), "debounced");
       });
@@ -738,7 +741,11 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
         const context = captureRunContext(contextInput, LIBRARY_VERSION);
         const valid = validateStart(options);
         const errors = [...(context.ok ? [] : context.errors), ...(valid.ok ? [] : valid.errors)];
-        if (!context.ok || !valid.ok) {
+        // The ingest rejects a NUL or a lone surrogate anywhere; the app's own facts are refused, not repaired.
+        if (context.ok && [context.context.app_version, context.context.build, context.context.os_version].some((v) => v !== null && hasBadText(v))) {
+          errors.push("appVersion, build and osVersion must hold no U+0000 or lone surrogate");
+        }
+        if (!context.ok || !valid.ok || errors.length) {
           report({ code: "invalid-start", message: `run not started, nothing will be sent: ${errors.join("; ")}` });
           return inertRun(mintRunId());
         }
