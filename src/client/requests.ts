@@ -1,4 +1,4 @@
-import type { DemandScoreSignals, IdentifyParams, OnboardingResponsePayload } from "./types";
+import type { DemandScoreSignals, IdentifyParams, OnboardingResponsePayload, OnboardingRunRequestBody } from "./types";
 import type { PaywallPresentationSnapshot } from "../paywall/contract";
 
 export const ROCALYTICS_API_BASE = "https://rocalytics-api.rocapine.io";
@@ -73,8 +73,8 @@ export function buildTrackRequest(context: RequestContext, input: TrackRequestIn
   });
 }
 
-/** `/onboarding-response`. */
-export function buildOnboardingResponseRequest(context: RequestContext, payload: OnboardingResponsePayload): RocalyticsRequest {
+/** `/onboarding-response`: a pre-v1 payload, or a run body (`toOnboardingRunBody`). */
+export function buildOnboardingResponseRequest(context: RequestContext, payload: OnboardingResponsePayload | OnboardingRunRequestBody): RocalyticsRequest {
   return post(context, "onboarding-response", payload);
 }
 

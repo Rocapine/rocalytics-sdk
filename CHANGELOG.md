@@ -19,6 +19,11 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
   - Requires an ingest that accepts v1.1: the schema is closed, so an ingest that only knows v1 rejects a snapshot carrying a v1.1 field or value.
 
 ### Changed
+- `@rocapine/rocalytics-sdk/client`: `createRocalyticsOnboardingSink` posts the onboarding run contract v1 snapshot to `/onboarding-response` (new `toOnboardingRunBody`), so an ingest that reads v1 stores each run under its own `run_id`, with its onboarding key and version, `seq`, `status`, Studio ids and `context.library_version`. Before, all of that was only inside `onboarding_metadata`, and the run landed as the sender's single `legacy` row.
+  - The body still carries the pre-v1 `responses` and `onboarding_metadata` beside the snapshot, so an ingest that reads only the pre-v1 shape keeps storing runs as before. A v1 ingest must drop those two keys before its size and schema checks.
+  - They are left out of a body they would take past 256 KiB. The pre-v1 ingest answers that body 400, which is transient: the tracker keeps the snapshot until an ingest that reads v1 takes it.
+  - `sent_at` stays the pre-v1 one, the run's latest recorded timestamp plus `seq` milliseconds.
+  - New exported type `OnboardingRunRequestBody`; `buildOnboardingResponseRequest` accepts it.
 - `@rocapine/rocalytics-sdk/paywall`: `PaywallPresentationInfo.moment` and `paywallId` are optional (required with provider `studio`), and `audienceId` is optional (absent is sent as null). On the snapshot types, `PresentationPaywall.moment_key` and `paywall_id` are optional, and `PresentationSurface` and `render_mode` are wider. Code reading `moment_key` or `paywall_id` as a `string`, or switching exhaustively over `surface` or `render_mode`, needs updating.
 
 ## [0.3.0] - 2026-10-13
