@@ -57,7 +57,9 @@ export function hasBadText(s: string): boolean {
 
 /**
  * `s` with each lone surrogate replaced by U+FFFD and each U+0000 removed: text
- * the ingest accepts, as close to `s` as it can be. A loop rather than
+ * the ingest accepts, as close to `s` as it can be. Text of NULs alone becomes
+ * U+FFFD rather than empty, which a field with a minimum length would refuse.
+ * A loop rather than
  * `String.prototype.toWellFormed`, which not every engine an app ships on has
  * (and which keeps U+0000).
  */
@@ -76,5 +78,5 @@ export function wellFormedText(s: string): string {
     } else if (c >= 0xdc00 && c <= 0xdfff) out += "�";
     else out += s[i];
   }
-  return out;
+  return out || "\uFFFD";
 }

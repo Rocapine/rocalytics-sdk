@@ -13,13 +13,13 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
 ### Changed
 - `@rocapine/rocalytics-sdk/client`: `createRocalyticsOnboardingSink` posts the onboarding run contract v1 snapshot to `/onboarding-response` (new `toOnboardingRunBody`), so an ingest that reads v1 stores each run under its own `run_id`, with its onboarding key and version, `seq`, `status`, Studio ids and `context.library_version`. Before, all of that was only inside `onboarding_metadata`, and the run landed as the sender's single `legacy` row.
   - The body still carries the pre-v1 `responses` and `onboarding_metadata` beside the snapshot, so an ingest that reads only the pre-v1 shape keeps storing runs as before. A v1 ingest must drop those two keys before its size and schema checks.
-  - They are left out of a body they would take past 256 KiB. The pre-v1 ingest answers that body 400, which is transient: the tracker keeps the snapshot until an ingest that reads v1 takes it.
+  - They are always there, even when they take the body past 256 KiB: the pre-v1 ingest answers a body without `responses` 400 with no outcome, which would be retried for ever, and a v1 ingest strips them before it measures the snapshot.
   - `sent_at` stays the pre-v1 one, the run's latest recorded timestamp plus `seq` milliseconds.
   - New exported type `OnboardingRunRequestBody`; `buildOnboardingResponseRequest` accepts it.
 
 ### Fixed
 - `@rocapine/rocalytics-sdk/onboarding`: text the ingest rejects for good (`string_encoding`), a U+0000 or a lone surrogate such as an emoji cut in half by a field's `maxLength`, is repaired rather than sent as is: a lone surrogate becomes U+FFFD, a U+0000 is removed, and a `text-repaired` diagnostic is reported. Before, the snapshot was rejected, and, snapshots being cumulative, every later one of the run too, completion included.
-  - Repaired: text answers, property strings, Studio links, and the context's `appVersion`, `build` and `osVersion` (one left empty becomes U+FFFD, so the run still starts).
+  - Repaired: text answers, property strings, Studio links, and the context's `appVersion`, `build` and `osVersion` (a value of U+0000 alone becomes U+FFFD, never empty, so the run still starts).
   - A run or unsent snapshot an earlier version stored with such text is repaired as it is read back, before it is sent.
   - A question key holding one is still refused as `invalid-answer`, as any invalid key is.
 

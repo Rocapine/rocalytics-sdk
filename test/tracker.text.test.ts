@@ -103,14 +103,15 @@ describe("text the ingest would reject", () => {
     expect(h.diagnostics.filter((d) => d.code === "text-repaired")).toHaveLength(2);
   });
 
-  it("a Studio link that is only NULs is refused, not sent empty", async () => {
+  it("a Studio link that is only NULs becomes U+FFFD, not an empty link or a refused start", async () => {
     const h = harness();
     const run = h.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST, studio: { audienceId: "\u0000" } });
     run.enterStep("goal");
     await h.tick();
-    expect(h.sink.received).toHaveLength(0);
-    expect(h.diagnostics.map((d) => d.code)).toContain("invalid-start");
+    expect(h.sink.last!.studio).toEqual({ audience_id: "\uFFFD" });
+    expect(h.diagnostics.map((d) => d.code)).not.toContain("invalid-start");
   });
+
 
   it("a key with bad text is refused with a diagnostic, never repaired", async () => {
     const h = harness();
@@ -163,6 +164,26 @@ describe("stored state an earlier build wrote with bad text", () => {
     expect(b.sink.last!.steps[0].answers).toEqual([{ question_key: "name", kind: "text", value: "Zoé�" }]);
     expect(b.sink.last!.status).toBe("completed");
     expect(b.diagnostics.map((d) => d.code)).toContain("text-repaired");
+  });
+
+  it("a stored string that is only NULs becomes U+FFFD, never empty", async () => {
+    const a = harness({ context: { appVersion: "2.4.0", build: "1", platform: "ios", osVersion: "MARK", locale: "en", timezone: "UTC" } });
+    const run = a.tracker.start({ onboarding: IDENTITY, manifest: MANIFEST, studio: { audienceId: "MARK" } });
+    run.enterStep("goal");
+    await a.tick();
+    await a.tracker.idle();
+    a.kill();
+    for (const [k, v] of Object.entries(a.storage.dump())) a.storage.setItem(k, v.split("MARK").join("\\u0000"));
+
+    const b = harness({ storage: a.storage, time: new ManualTime(T0 + 600_000) });
+    const resumed = await b.tracker.resume();
+    expect(resumed).not.toBeNull();
+    resumed!.complete();
+    await b.tick(0);
+    const last = b.sink.last!;
+    expect(last.context.os_version).toBe("\uFFFD");
+    expect(last.studio).toEqual({ audience_id: "\uFFFD" });
+    expect(badText(toOnboardingRunBody(last))).toBe(false);
   });
 
   it("an unsent stored snapshot is repaired before it is sent", async () => {

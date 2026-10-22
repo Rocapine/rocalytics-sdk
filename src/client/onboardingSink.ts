@@ -1,11 +1,7 @@
 import type { SinkResult, Sink } from "../core/sink";
-import { utf8ByteLength } from "../core/text";
 import type { Answer, OnboardingRunSnapshot } from "../onboarding/contract";
 import type { RocalyticsClient } from "./client";
 import type { OnboardingMetadata, OnboardingResponsePayload, OnboardingRunRequestBody, OnboardingStepAnswers } from "./types";
-
-/** The contract's limit on a serialized snapshot, 256 KiB (D8). */
-const SNAPSHOT_LIMIT = 262_144;
 
 /**
  * The body `/onboarding-response` gets for one snapshot: the contract v1
@@ -19,18 +15,15 @@ const SNAPSHOT_LIMIT = 262_144;
  * - `sent_at` is the pre-v1 one (the run's latest recorded timestamp plus
  *   `seq` milliseconds), as the body has one `sent_at` and the pre-v1 ingest
  *   needs it to rise with every send. v1 reads `sent_at` as advisory only.
- * - When the pre-v1 keys would take the body past the contract's 256 KiB,
- *   which a run close to the tracker's recording budget can, they are left
- *   out: the v1 snapshot alone stays within the limit. The pre-v1 ingest then
- *   answers 400, which is transient, so the tracker keeps the snapshot until
- *   an ingest that reads v1 takes it.
+ * - The pre-v1 keys are always there, even when they take the body past the
+ *   contract's 256 KiB: the pre-v1 ingest answers a body without `responses`
+ *   400 with no outcome, which the tracker retries for ever, and a v1 ingest
+ *   strips them before it measures the snapshot.
  * - It depends on the snapshot alone, so a retry resends the identical body.
  */
 export function toOnboardingRunBody(snapshot: OnboardingRunSnapshot): OnboardingRunRequestBody {
   const legacy = toOnboardingResponsePayload(snapshot);
-  const v1: OnboardingRunRequestBody = { ...snapshot, sent_at: legacy.sent_at };
-  const body: OnboardingRunRequestBody = { ...v1, onboarding_metadata: legacy.onboarding_metadata, responses: legacy.responses };
-  return utf8ByteLength(JSON.stringify(body)) <= SNAPSHOT_LIMIT ? body : v1;
+  return { ...snapshot, sent_at: legacy.sent_at, onboarding_metadata: legacy.onboarding_metadata, responses: legacy.responses };
 }
 
 /**

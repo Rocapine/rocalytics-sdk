@@ -734,7 +734,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
   /**
    * The context with a NUL or a lone surrogate in `appVersion`, `build` or
    * `osVersion` repaired and reported: the ingest rejects one anywhere, and a
-   * device string must never cost the run. Text left empty becomes U+FFFD.
+   * device string must never cost the run.
    */
   function repairContext(input: RunContextInput): RunContextInput {
     if (!input || typeof input !== "object") return input;
@@ -743,7 +743,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
       const v: unknown = out[field];
       if (typeof v !== "string" || !hasBadText(v)) continue;
       report({ code: "text-repaired", message: `context.${field}: a U+0000 or a lone surrogate was removed or replaced with U+FFFD` });
-      out[field] = wellFormedText(v) || "\uFFFD";
+      out[field] = wellFormedText(v);
     }
     return out;
   }

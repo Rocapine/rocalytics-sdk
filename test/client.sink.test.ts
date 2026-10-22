@@ -301,17 +301,22 @@ describe("toOnboardingRunBody: the v1 snapshot, plus the pre-v1 keys", () => {
     });
   });
 
-  it("past 256 KiB with the pre-v1 keys it sends the v1 snapshot alone, so no snapshot outgrows the v1 limit", () => {
+  it("always carries the pre-v1 keys, past 256 KiB too: the pre-v1 ingest 400s a body without them, and the v1 one strips them before measuring", () => {
     const big = bigSnapshot(150);
     expect(sizeOf(big)).toBeLessThanOrEqual(SIZE_LIMIT);
-    expect(sizeOf({ ...big, ...toOnboardingResponsePayload(big) })).toBeGreaterThan(SIZE_LIMIT);
     const body = toOnboardingRunBody(big);
-    expect(body).not.toHaveProperty("responses");
-    expect(body).not.toHaveProperty("onboarding_metadata");
-    assertConformant(body);
+    expect(sizeOf(body)).toBeGreaterThan(SIZE_LIMIT);
+    expect(body).toHaveProperty("responses");
+    expect(body).toHaveProperty("onboarding_metadata");
+    const { responses: _r, onboarding_metadata: _m, ...v1 } = body;
+    assertConformant(v1);
     expect(body.sent_at).toBe(toOnboardingResponsePayload(big).sent_at);
-    // Below the limit the pre-v1 keys are there.
-    expect(toOnboardingRunBody(bigSnapshot(100))).toHaveProperty("responses");
+  });
+
+  it("a run of 70 answers of 1,000 \"é\" still carries responses", () => {
+    const big = bigSnapshot(70);
+    for (const e of big.steps) e.answers = [{ question_key: "note", kind: "text", value: "é".repeat(1000) }];
+    expect(toOnboardingRunBody(big)).toHaveProperty("responses");
   });
 
   it("depends on the snapshot alone, so a resend after a relaunch carries the identical body", () => {
@@ -349,10 +354,10 @@ describe("createRocalyticsOnboardingSink", () => {
     expect(ingest.posted).toEqual([toOnboardingRunBody(IN_PROGRESS)]);
   });
 
-  it("a v1-only body the pre-v1 ingest 400s is transient, so the tracker keeps it until an ingest that reads v1 takes it", async () => {
+  it("a run past 256 KiB with the pre-v1 keys still reaches the pre-v1 ingest, which stores it", async () => {
     const ingest = fakeIngest();
-    expect((await createRocalyticsOnboardingSink(clientFor(ingest.fetch)).send(bigSnapshot(150))).outcome).toBe("transient");
-    expect(ingest.row()).toBeUndefined();
+    expect((await createRocalyticsOnboardingSink(clientFor(ingest.fetch)).send(bigSnapshot(150))).outcome).toBe("accepted");
+    expect(ingest.row()).toBeDefined();
   });
 
   it("a 400 is transient unless its body is an explicit rejection", async () => {
