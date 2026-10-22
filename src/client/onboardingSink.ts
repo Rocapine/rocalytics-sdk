@@ -1,11 +1,35 @@
 import type { SinkResult, Sink } from "../core/sink";
 import type { Answer, OnboardingRunSnapshot } from "../onboarding/contract";
 import type { RocalyticsClient } from "./client";
-import type { OnboardingMetadata, OnboardingResponsePayload, OnboardingStepAnswers } from "./types";
+import type { OnboardingMetadata, OnboardingResponsePayload, OnboardingRunRequestBody, OnboardingStepAnswers } from "./types";
+
+/**
+ * The body `/onboarding-response` gets for one snapshot: the contract v1
+ * snapshot at the top level, so an ingest that reads v1 stores it as its own
+ * run, keyed by `run_id`, plus the pre-v1 `responses` and
+ * `onboarding_metadata` from `toOnboardingResponsePayload`, so an ingest that
+ * reads only the pre-v1 shape (which 400s a body with no `responses`) stores
+ * it as before. A v1 ingest drops those two keys before it checks the
+ * snapshot, as the contract's schema is closed.
+ *
+ * - `sent_at` is the pre-v1 one (the run's latest recorded timestamp plus
+ *   `seq` milliseconds), as the body has one `sent_at` and the pre-v1 ingest
+ *   needs it to rise with every send. v1 reads `sent_at` as advisory only.
+ * - The pre-v1 keys are always there, even when they take the body past the
+ *   contract's 256 KiB: the pre-v1 ingest answers a body without `responses`
+ *   400 with no outcome, which the tracker retries for ever, and a v1 ingest
+ *   strips them before it measures the snapshot.
+ * - It depends on the snapshot alone, so a retry resends the identical body.
+ */
+export function toOnboardingRunBody(snapshot: OnboardingRunSnapshot): OnboardingRunRequestBody {
+  const legacy = toOnboardingResponsePayload(snapshot);
+  return { ...snapshot, sent_at: legacy.sent_at, onboarding_metadata: legacy.onboarding_metadata, responses: legacy.responses };
+}
 
 /**
  * A v1 onboarding run snapshot in the pre-v1 `/onboarding-response` shape,
- * which is the only onboarding payload the Rocalytics ingest reads. The keys
+ * which is the onboarding payload the Rocalytics ingest read before contract
+ * v1, and which `toOnboardingRunBody` sends alongside the snapshot. The keys
  * follow docs/onboarding-run-contract.md, section 9, which is how the ingest
  * reads such a payload back into a run.
  *
@@ -99,17 +123,18 @@ export function rocalyticsOutcome(status: number, body?: unknown): SinkResult {
 
 /**
  * A sink for the onboarding run tracker (`@rocapine/rocalytics-sdk/onboarding`)
- * that delivers each snapshot to Rocalytics through `client`, as the pre-v1
- * onboarding payload (see `toOnboardingResponsePayload`).
+ * that delivers each snapshot to Rocalytics through `client`, as a run body:
+ * the v1 snapshot plus the pre-v1 keys (see `toOnboardingRunBody`).
  *
  * Once a completed snapshot is accepted, the sink also sends the
  * `onboarding_completed` event, which is where consumers of the pre-v1 data
  * read completion from. It is deduplicated per device, like any `track`
  * event; if it fails, the send is transient, so the tracker's retry sends it.
  *
- * The ingest keeps one onboarding snapshot per roca id, so a new run replaces
- * the previous one there, and an app should report a flow through this sink
- * or through `client.trackOnboarding`, not both.
+ * An ingest that reads v1 keeps each run apart, by `run_id`. One that reads
+ * only the pre-v1 shape keeps one onboarding snapshot per roca id, so a new
+ * run replaces the previous one there. Either way an app should report a flow
+ * through this sink or through `client.trackOnboarding`, not both.
  *
  * While the client is inert every send is transient: the tracker keeps the
  * snapshot, persisted when it has storage, for a launch where the client works.

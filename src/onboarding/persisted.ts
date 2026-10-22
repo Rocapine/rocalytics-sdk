@@ -3,6 +3,7 @@
 // nothing read from it is trusted: an invalid part is dropped and reported,
 // and the stored value is then rewritten without it.
 import type { Outbound } from "../core/delivery";
+import { hasBadText, wellFormedText } from "../core/text";
 import type { OnboardingRunSnapshot } from "./contract";
 import type { RunState } from "./state";
 
@@ -65,29 +66,51 @@ export function isOutbound(runId: string, v: unknown): v is Outbound<OnboardingR
   );
 }
 
-/** The usable parts of a stored value, and what was dropped. */
+const hasBadTextDeep = (v: unknown): boolean =>
+  typeof v === "string" ? hasBadText(v) :
+  Array.isArray(v) ? v.some(hasBadTextDeep) :
+  isObj(v) ? Object.entries(v).some(([k, x]) => hasBadText(k) || hasBadTextDeep(x)) : false;
+
+const wellFormedDeep = (v: unknown): unknown =>
+  typeof v === "string" ? wellFormedText(v) :
+  Array.isArray(v) ? v.map(wellFormedDeep) :
+  isObj(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [wellFormedText(k), wellFormedDeep(x)])) : v;
+
+/**
+ * `v` with every string and key made well formed. An earlier build could store
+ * a NUL or a lone surrogate the ingest rejects for good; `repaired` says one was.
+ */
+function repairText<T>(v: T, repaired: string[], what: string): T {
+  if (!hasBadTextDeep(v)) return v;
+  repaired.push(what);
+  return wellFormedDeep(v) as T;
+}
+
+/** The usable parts of a stored value, what was dropped, and what had its text repaired. */
 export function parsePersisted(raw: unknown): {
   current: RunState | null;
   outboxes: [string, Outbound<OnboardingRunSnapshot>][];
   problems: string[];
+  repaired: string[];
 } {
   const problems: string[] = [];
+  const repaired: string[] = [];
   if (!isObj(raw) || raw.format !== 1) {
-    return { current: null, outboxes: [], problems: ["unrecognised stored state"] };
+    return { current: null, outboxes: [], problems: ["unrecognised stored state"], repaired };
   }
   let current: RunState | null = null;
   if (raw.current !== null && raw.current !== undefined) {
-    if (isRunState(raw.current)) current = raw.current;
+    if (isRunState(raw.current)) current = repairText(raw.current, repaired, "the stored run");
     else problems.push("the stored run is malformed");
   }
   const outboxes: [string, Outbound<OnboardingRunSnapshot>][] = [];
   if (isObj(raw.outboxes)) {
     for (const [runId, item] of Object.entries(raw.outboxes)) {
-      if (isOutbound(runId, item)) outboxes.push([runId, item]);
+      if (isOutbound(runId, item)) outboxes.push([runId, repairText(item, repaired, `the stored snapshot of run "${runId}"`)]);
       else problems.push(`the stored snapshot of run "${runId}" is malformed`);
     }
   } else if (raw.outboxes !== undefined) {
     problems.push("the stored snapshots are malformed");
   }
-  return { current, outboxes, problems };
+  return { current, outboxes, problems, repaired };
 }

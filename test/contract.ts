@@ -56,8 +56,17 @@ export function semanticErrors(p: Json): string[] {
     const questions = e.answers.map((a: Json) => a.question_key);
     if (new Set(questions).size !== questions.length) errors.push(`${e.step_key}: question_key repeated`);
   });
+  if (badText(p)) errors.push("a string or key holds a U+0000 or a lone surrogate");
   return errors;
 }
+
+// Rule 9, the ingest's own check (onboarding-response/validate.ts).
+// eslint-disable-next-line no-control-regex
+const BAD_TEXT = /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+export const badText = (v: unknown): boolean =>
+  typeof v === "string" ? BAD_TEXT.test(v) :
+  Array.isArray(v) ? v.some(badText) :
+  v && typeof v === "object" ? Object.entries(v).some(([k, x]) => BAD_TEXT.test(k) || badText(x)) : false;
 
 /** Fails the test unless `p` passes the size limit, the schema and section 4. */
 export function assertConformant(p: unknown): void {

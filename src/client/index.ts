@@ -13,7 +13,7 @@ export {
   RocalyticsClient,
 } from "./client";
 export type { RocalyticsClientOptions } from "./client";
-export { createRocalyticsOnboardingSink, rocalyticsOutcome, toOnboardingResponsePayload } from "./onboardingSink";
+export { createRocalyticsOnboardingSink, rocalyticsOutcome, toOnboardingResponsePayload, toOnboardingRunBody } from "./onboardingSink";
 export { createRocalyticsPaywallSink, paywallIngestOutcome } from "./paywallSink";
 export { loadExpoModules } from "./native";
 export type { ApplicationModule, ExpoModuleLoaders, LoadResult, RocalyticsModules } from "./native";
@@ -42,6 +42,7 @@ export type {
   IdentifyParams,
   OnboardingMetadata,
   OnboardingResponsePayload,
+  OnboardingRunRequestBody,
   OnboardingStepAnswers,
   OnboardingStepResponse,
   PurchaseProduct,

@@ -32,7 +32,7 @@ The package is for tracking only: it holds no remote-control code. `/onboarding`
 This file is [`examples/hand-coded-onboarding.ts`](examples/hand-coded-onboarding.ts), type-checked and run by the test suite:
 
 ```ts
-import { createHttpSink, onboardingRun, type KeyValueStorage, type OnboardingRun } from "@rocapine/rocalytics-sdk/onboarding";
+import { createHttpSink, onboardingRun, type KeyValueStorage, type OnboardingRun, type StartOptions } from "@rocapine/rocalytics-sdk/onboarding";
 
 // 1. Once, at app startup.
 export function setUpTracking(storage: KeyValueStorage, device: { appVersion: string; build: string; osVersion: string }) {
@@ -56,32 +56,35 @@ export function setUpTracking(storage: KeyValueStorage, device: { appVersion: st
 // 2. When the onboarding opens: resume the killed run if the app restores
 //    the user's position, otherwise start a new one. resume() waits for
 //    storage however long it takes, so stop waiting after a few seconds.
+const MAIN: StartOptions = {
+  onboarding: { key: "main", version: "3" },
+  // Every screen the flow can show, in order. Alternatives at one position share a slot.
+  manifest: {
+    steps: [
+      { stepKey: "welcome" },
+      { stepKey: "goal" },
+      { stepKey: "level_beginner", slot: "level" },
+      { stepKey: "level_advanced", slot: "level" },
+      { stepKey: "notifications" },
+      { stepKey: "done" },
+    ],
+  },
+  properties: { signup_source: "email" },
+};
+
 export async function openOnboarding(restorePosition: boolean, resumeTimeoutMs = 3000): Promise<OnboardingRun> {
-  const resumed = restorePosition ? await resumeWithin(resumeTimeoutMs) : null;
+  // Passing the options resumes only a killed run of this same onboarding.
+  const resumed = restorePosition ? await resumeWithin(MAIN, resumeTimeoutMs) : null;
   // Resumed: show the screen your own navigation state restored. The tracker
   // records it as a new entry for its last recorded step (none if truncated).
   if (resumed) return resumed;
-  return onboardingRun.start({
-    onboarding: { key: "main", version: "3" },
-    // Every screen the flow can show, in order. Alternatives at one position share a slot.
-    manifest: {
-      steps: [
-        { stepKey: "welcome" },
-        { stepKey: "goal" },
-        { stepKey: "level_beginner", slot: "level" },
-        { stepKey: "level_advanced", slot: "level" },
-        { stepKey: "notifications" },
-        { stepKey: "done" },
-      ],
-    },
-    properties: { signup_source: "email" },
-  });
+  return onboardingRun.start(MAIN);
 }
 
-function resumeWithin(ms: number): Promise<OnboardingRun | null> {
+function resumeWithin(options: StartOptions, ms: number): Promise<OnboardingRun | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<null>((resolve) => (timer = setTimeout(() => resolve(null), ms)));
-  return Promise.race([onboardingRun.resume(), timeout]).finally(() => clearTimeout(timer));
+  return Promise.race([onboardingRun.resume(options), timeout]).finally(() => clearTimeout(timer));
 }
 
 // 3. Each screen reports when it is shown and when the user leaves it.
@@ -175,7 +178,9 @@ onboardingRun.start({
 
 No method throws. Anything the tracker declines to do is reported through `onDiagnostic` instead.
 
-### `onboardingRun.resume(): Promise<OnboardingRun | null>`
+### `onboardingRun.resume(expected?: StartOptions): Promise<OnboardingRun | null>`
+
+Pass `expected`, the options you would pass to `start` for the onboarding the app is about to show. A run belongs to one onboarding: if the killed run has another onboarding identity (key, version, variant) or another manifest, for example a Studio-served flow on one launch and the app's bundled fallback on the next, `resume(expected)` resolves null and reports `resume-mismatch`, so your `start` begins a new run instead of merging the two. Without `expected` it resumes whatever run was killed.
 
 After the app was killed mid-onboarding, `resume()` returns the run that was in progress, if the app restores the user's position. The run keeps its `run_id` and continues its `seq`. The tracker:
 
@@ -381,18 +386,18 @@ export function setUpOnboardingTracking(storage: KeyValueStorage, context: () =>
 
 A method whose request gets a non-2xx answer rejects with `[ROCALYTICS] <endpoint> failed: <status>`, as the copied client did. The client never logs a request, its response or purchase properties. The only thing it reports is why it went inert or why start-up failed, through `onDiagnostic`, which defaults to `console.warn`. The request builders (`buildTrackRequest`, `buildIdentifyRequest`, `buildOnboardingResponseRequest`, `buildDemandScoreRequest`) and `getEventId` are exported as pure functions.
 
-**Onboarding runs.** `createRocalyticsOnboardingSink(client)` is a sink for the tracker. The Rocalytics ingest reads only the pre-v1 onboarding payload, so each snapshot is mapped onto it (`toOnboardingResponsePayload`):
+**Onboarding runs.** `createRocalyticsOnboardingSink(client)` is a sink for the tracker. Each body it posts (`toOnboardingRunBody`) is the contract v1 snapshot itself, at the top level: `schema_version`, `run_id`, `seq`, `status`, `started_at`, `completed_at`, `sent_at`, `onboarding`, `studio`, `context` (with `library_version`), `manifest`, `properties`, `truncated` and `steps`. An ingest that reads v1 stores each run apart, keyed by `run_id`. Beside them, the body carries the pre-v1 `responses` and `onboarding_metadata` (`toOnboardingResponsePayload`), so an ingest that reads only the pre-v1 shape stores the run as before; a v1 ingest drops those two keys before it checks the snapshot. They are always there, even past 256 KiB: the pre-v1 ingest answers a body without `responses` 400, and a v1 ingest strips them before it measures the snapshot. The pre-v1 part:
 
 - Entries become `responses`, with `step_key` as `step_id`.
 - Answers become `{ [questionKey]: value }`. A numeric answer's unit is dropped, because that shape has no place for it.
 - `onboarding_metadata` carries the keys the [contract's section 9](docs/onboarding-run-contract.md#9-pre-v1-payloads-d22-d23) reads back: `onboardingId` (or `onboarding_id`, set to the onboarding key, for a run with no Studio onboarding), `audienceId`, `deployment_id`, `locale` from the run's context, and `draft: true` for a draft. It also carries `onboarding_key`, `onboarding_version`, `variant_key`, `run_id` and `seq`.
-- `sent_at` is the run's latest recorded timestamp plus `seq` milliseconds, not the device's send time. The ingest keeps one snapshot per roca id and replaces it only with a strictly later `sent_at`, so two sends in the same millisecond, or a device clock stepping back, would otherwise lose a snapshot. This value rises with every send **within a run**, and a retry resends the identical body. Across runs it does not help. If the device clock steps back between two runs, the next run's snapshots can be dropped silently: about the first span of that run equal to the step, or all of it if the run is shorter. The sink cannot tell a stored 2xx from a dropped one. Pre-v1 reporting had the same limit.
+- `sent_at`, the one both parts share, is the run's latest recorded timestamp plus `seq` milliseconds, not the device's send time (v1 reads it as advisory only). The pre-v1 ingest keeps one snapshot per roca id and replaces it only with a strictly later `sent_at`, so two sends in the same millisecond, or a device clock stepping back, would otherwise lose a snapshot. This value rises with every send **within a run**, and a retry resends the identical body. Across runs it does not help. If the device clock steps back between two runs, the next run's snapshots can be dropped silently: about the first span of that run equal to the step, or all of it if the run is shorter. The sink cannot tell a stored 2xx from a dropped one. Pre-v1 reporting had the same limit.
 
 **Completion.** Consumers of the pre-v1 data read completion from the `onboarding_completed` event, not from the snapshot. So once a completed snapshot is accepted, the sink also sends `track("onboarding_completed")`, once per run. Its deduplication id is run-scoped, `${rocaId}-onboarding_completed-${run_id}`. Each completed run on a device produces its own event, a replay included, and a resend of the same run's completion, even after a relaunch, is deduplicated. If it fails, the send counts as transient, and the tracker's retry sends it. Do not also send `onboarding_completed` yourself for a flow reported through the sink.
 
 **Answers.** An answer is stored under its step id and `question_key`. A consumer that reads one particular answer finds it only if the flow keeps the same step key and `questionKey` its previous reporting used. When you move a flow from `trackOnboarding` to the tracker, reuse those ids.
 
-The ingest keeps one onboarding per roca id, so report a flow through the sink or through `trackOnboarding`, not both.
+The pre-v1 ingest keeps one onboarding per roca id, so report a flow through the sink or through `trackOnboarding`, not both.
 
 That endpoint answers success with a 2xx and no body, so a 2xx is accepted. Otherwise the contract's rule applies: only a body saying `{"outcome": "rejected"}` is permanent, and every other answer is transient and retried. That includes a 400 without such a body, and a 404. Every send waits for `ready`, so a 404 (no identity for this roca id) means no identify has succeeded for it yet: the start-up identify failed in this session, or `identifyOnStart` is `false` and the app has not identified the device yet. The retries stop failing once an identify succeeds: through the app's own `identify()` call, or at the next launch when `identifyOnStart` is on.
 

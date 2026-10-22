@@ -5,7 +5,7 @@ import type { OnboardingRunSnapshot } from "../onboarding/contract";
 import type { PaywallPresentationSnapshot } from "../paywall/contract";
 import { paywallIngestOutcome } from "./paywallSink";
 import { loadExpoModules, type RocalyticsModules } from "./native";
-import { rocalyticsOutcome, toOnboardingResponsePayload } from "./onboardingSink";
+import { rocalyticsOutcome, toOnboardingRunBody } from "./onboardingSink";
 import {
   buildDemandScoreRequest,
   buildIdentifyRequest,
@@ -239,7 +239,7 @@ export class RocalyticsClient {
   }
 
   /**
-   * Delivers one onboarding run snapshot as the pre-v1 onboarding payload,
+   * Delivers one onboarding run snapshot as a run body (`toOnboardingRunBody`),
    * then, for an accepted completed snapshot, sends `onboarding_completed`
    * once per run. Its deduplication id is run-scoped,
    * `${rocaId}-onboarding_completed-${run_id}` (the API only requires the
@@ -254,7 +254,7 @@ export class RocalyticsClient {
     const fetch = this.fetchFn();
     if (!fetch) return { outcome: "transient", reason: "no fetch available" };
     try {
-      const request = buildOnboardingResponseRequest(this.context(), toOnboardingResponsePayload(snapshot));
+      const request = buildOnboardingResponseRequest(this.context(), toOnboardingRunBody(snapshot));
       const response = await fetch(request.url, request.init);
       const body = response.ok ? undefined : await response.json().catch(() => undefined);
       const result = rocalyticsOutcome(response.status, body);

@@ -4,6 +4,7 @@ import { consoleDiagnostics, safeDiagnostics, type DiagnosticHandler } from "../
 import { createUuid } from "../core/ids";
 import type { Sink } from "../core/sink";
 import { createSerialStore, type KeyValueStorage, type SerialStore } from "../core/storage";
+import { hasBadText, wellFormedText } from "../core/text";
 import { systemClock, systemTimers, type Clock, type Timers } from "../core/time";
 import { LIBRARY_VERSION } from "../version";
 import type { OnboardingRunSnapshot, Properties } from "./contract";
@@ -117,8 +118,15 @@ export interface OnboardingRunTracker {
    * It waits for the stored state to be read, however long that takes: a
    * storage that never answers the read means it never resolves. An app that
    * cannot wait should race it with its own timeout and call `start` instead.
+   *
+   * `expected`, the options the app would pass to `start` for the onboarding
+   * it is about to show, scopes the run to that onboarding: a killed run of
+   * another onboarding identity (key, version, variant) or manifest, such as a
+   * Studio-served flow followed by the app's bundled fallback, is not resumed
+   * (null, with a `resume-mismatch` diagnostic), so `start` begins a new run
+   * rather than merging two onboardings into one.
    */
-  resume(): Promise<OnboardingRun | null>;
+  resume(expected?: StartOptions): Promise<OnboardingRun | null>;
   /** Resolves once queued storage writes are done. */
   idle(): Promise<void>;
   /**
@@ -144,6 +152,18 @@ const NOTE_MESSAGES: Record<Note, string> = {
   truncated: "the run reached a recording limit (500 entries or 261,120 bytes): recording has stopped",
   "too-many-answers": "an entry holds at most 50 answers: the extra answer was dropped",
 };
+
+/** Equal as the ingest compares a run's identity and manifest: key order and an absent field vs null do not count (section 5, rule 4). */
+function sameJson(a: unknown, b: unknown): boolean {
+  return JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+}
+
+function canonical(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (!v || typeof v !== "object") return v;
+  const o = v as Record<string, unknown>;
+  return Object.fromEntries(Object.keys(o).filter((k) => o[k] != null).sort().map((k) => [k, canonical(o[k])]));
+}
 
 function inertRun(runId: string): OnboardingRun {
   return {
@@ -322,10 +342,14 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
               message: `the stored state has format ${format}, which this version does not know: it is left untouched, and this session runs without persistence`,
             });
           }
-          const { current, outboxes: stored, problems } = parsePersisted(raw);
+          const { current, outboxes: stored, problems, repaired } = parsePersisted(raw);
           if (problems.length) {
             rewrite = true;
             report({ code: "storage", message: `${problems.join("; ")}: discarded` });
+          }
+          if (repaired.length) {
+            rewrite = true;
+            report({ code: "text-repaired", message: `${repaired.join("; ")}: a U+0000 or a lone surrogate was removed or replaced with U+FFFD` });
           }
           // What is left, written for another destination: never sent here, so discarded.
           if (destinationChanged || (raw as { destination?: unknown }).destination !== destination) {
@@ -671,8 +695,10 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
         const answers = [];
         for (const input of raw) {
           const r = toAnswer(input);
-          if (r.ok) answers.push(r.answer);
-          else this.diag("invalid-answer", r.error);
+          if (r.ok) {
+            answers.push(r.answer);
+            for (const [code, message] of r.warnings ?? []) this.diag(code, message);
+          } else this.diag("invalid-answer", r.error);
         }
         this.apply(exit(this.state, index, answers, this.now()), "debounced");
       });
@@ -705,6 +731,23 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
     }
   }
 
+  /**
+   * The context with a NUL or a lone surrogate in `appVersion`, `build` or
+   * `osVersion` repaired and reported: the ingest rejects one anywhere, and a
+   * device string must never cost the run.
+   */
+  function repairContext(input: RunContextInput): RunContextInput {
+    if (!input || typeof input !== "object") return input;
+    const out = { ...input };
+    for (const field of ["appVersion", "build", "osVersion"] as const) {
+      const v: unknown = out[field];
+      if (typeof v !== "string" || !hasBadText(v)) continue;
+      report({ code: "text-repaired", message: `context.${field}: a U+0000 or a lone surrogate was removed or replaced with U+FFFD` });
+      out[field] = wellFormedText(v);
+    }
+    return out;
+  }
+
   return {
     start(options) {
       try {
@@ -716,7 +759,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
           report({ code: "invalid-start", message: `the context function threw: ${String(e)}` });
           return inertRun(mintRunId());
         }
-        const context = captureRunContext(contextInput, LIBRARY_VERSION);
+        const context = captureRunContext(repairContext(contextInput), LIBRARY_VERSION);
         const valid = validateStart(options);
         const errors = [...(context.ok ? [] : context.errors), ...(valid.ok ? [] : valid.errors)];
         if (!context.ok || !valid.ok) {
@@ -757,12 +800,24 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
       }
     },
 
-    async resume() {
+    async resume(expected) {
       try {
         void waitLoaded(); // reports a slow read
         await loaded;
         if (disposed || startedThisSession || !persistedCurrent) return null;
         const state = persistedCurrent;
+        if (expected !== undefined) {
+          const valid = validateStart(expected);
+          const same =
+            valid.ok &&
+            sameJson(valid.value.onboarding, state.onboarding) &&
+            sameJson(valid.value.manifest, state.manifest);
+          if (!same) {
+            // Left in place: the app's start() sends it as abandoned and begins a new run.
+            report({ code: "resume-mismatch", runId: state.runId, message: "the killed run is of another onboarding or manifest: not resumed" });
+            return null;
+          }
+        }
         persistedCurrent = null;
         const now = Math.max(clock.now(), floorMs(state), state.lastActiveAt);
         const controller = new Controller(state);
@@ -842,8 +897,8 @@ export const onboardingRun = {
     consoleDiagnostics({ code: "not-configured", message: "onboardingRun.start was called before onboardingRun.configure: nothing is tracked" });
     return inertRun("00000000-0000-0000-0000-000000000000");
   },
-  resume(): Promise<OnboardingRun | null> {
-    return instance ? instance.resume() : Promise.resolve(null);
+  resume(expected?: StartOptions): Promise<OnboardingRun | null> {
+    return instance ? instance.resume(expected) : Promise.resolve(null);
   },
   idle(): Promise<void> {
     return instance ? instance.idle() : Promise.resolve();

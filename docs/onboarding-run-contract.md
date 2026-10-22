@@ -501,6 +501,7 @@ JSON Schema cannot express these rules, so the ingest MUST check them. A snapsho
 6. Only the last entry may have a null `exited_at`, and it MUST be null when `status` is `in_progress`. **Truncated form:** when `truncated` is set, the last entry MAY also have an exit while `in_progress`.
 7. When `status` is `completed`, the last entry's `exited_at` equals `completed_at`. **Truncated form:** when `truncated` is set, it is set and at or before `completed_at`.
 8. `question_key` is unique within an entry.
+9. No string and no object key holds a U+0000 or a lone UTF-16 surrogate: Postgres `jsonb` cannot store the first, and the second is not valid UTF-8. The SDK's tracker never sends one: it replaces a lone surrogate with U+FFFD and removes U+0000 (text of U+0000 alone becomes U+FFFD) in a text answer, a property string, a Studio link, the `context`'s `app_version`, `build` and `os_version`, and a run or snapshot it reads back from storage, and reports `text-repaired`. It refuses a key that holds one.
 
 These rules apply to one snapshot. The rules between snapshots of one run (identity, manifest, `seq`, completion) are acceptance rules, in [section 5](#5-transport-d4-d12-d13-d27).
 

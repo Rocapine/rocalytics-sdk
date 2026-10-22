@@ -1,5 +1,7 @@
 // Wire types of the Rocalytics API, as the client sends and reads them.
 
+import type { OnboardingRunSnapshot } from "../onboarding/contract";
+
 /**
  * Event names `track` accepts. The union of every name the copied clients
  * allowed; the API rejects a name it does not know. Any other name goes
@@ -89,6 +91,13 @@ export type OnboardingResponsePayload = {
   sent_at: string;
   responses: OnboardingStepResponse[];
 };
+
+/**
+ * The body `sendOnboardingRun` posts to `/onboarding-response`: a contract v1
+ * snapshot, plus the pre-v1 `responses` and `onboarding_metadata` while they
+ * fit in the contract's 256 KiB (see `toOnboardingRunBody`).
+ */
+export type OnboardingRunRequestBody = OnboardingRunSnapshot & Partial<Pick<OnboardingResponsePayload, "onboarding_metadata" | "responses">>;
 
 /** Device facts sent with every tracked event. */
 export type DeviceContext = {

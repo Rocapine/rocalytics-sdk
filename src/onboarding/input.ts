@@ -1,7 +1,7 @@
 // The tracker's public input types (camelCase, as an app writes them) and their
 // validation against the contract. Anything that would make the ingest reject a
 // snapshot is caught here, so the tracker never sends it.
-import { codePointLength } from "../core/text";
+import { codePointLength, hasBadText, wellFormedText } from "../core/text";
 import type { Answer, Manifest, OnboardingIdentity, Properties, PropertyValue, StudioLinks } from "./contract";
 
 export interface OnboardingInput {
@@ -65,6 +65,13 @@ export const MAX_PROPERTIES = 20;
 export const isKey = (v: unknown): v is string => typeof v === "string" && KEY.test(v);
 const isLink = (v: unknown): v is string => typeof v === "string" && codePointLength(v) >= 1 && codePointLength(v) <= 128;
 
+/** Text with a NUL or a lone surrogate, which the ingest rejects, repaired and reported; anything else as it is. */
+function repaired<T>(value: T, what: string, warnings: [string, string][]): T {
+  if (typeof value !== "string" || !hasBadText(value)) return value;
+  warnings.push(["text-repaired", `${what}: a U+0000 or a lone surrogate was removed or replaced with U+FFFD`]);
+  return wellFormedText(value) as T;
+}
+
 export interface ValidStart {
   onboarding: OnboardingIdentity;
   studio?: StudioLinks;
@@ -102,8 +109,9 @@ export function validateStart(options: StartOptions): { ok: true; value: ValidSt
         ["deployment_id", studioIn.deploymentId],
         ["audience_id", studioIn.audienceId],
       ];
-      for (const [field, value] of links) {
-        if (value === undefined || value === null) continue;
+      for (const [field, raw] of links) {
+        if (raw === undefined || raw === null) continue;
+        const value = repaired(raw, `studio.${field}`, warnings);
         if (!isLink(value)) errors.push(`studio.${field} must be 1 to 128 characters`);
         else studio[field] = value;
       }
@@ -194,7 +202,8 @@ export function mergeProperties(base: Properties, patch: unknown): { value: Prop
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
     return { value, problems: [["invalid-property", "properties must be an object"]] };
   }
-  for (const [k, v] of Object.entries(patch as Record<string, unknown>)) {
+  for (const [k, raw] of Object.entries(patch as Record<string, unknown>)) {
+    const v = PROPERTY_KEY.test(k) ? repaired(raw, `property "${k}"`, problems) : raw;
     const problem = propertyProblem(k, v);
     if (problem) {
       problems.push(["invalid-property", problem]);
@@ -209,8 +218,8 @@ export function mergeProperties(base: Properties, patch: unknown): { value: Prop
   return { value, problems };
 }
 
-/** One answer in wire form, or the reason it cannot be sent. */
-export function toAnswer(input: unknown): { ok: true; answer: Answer } | { ok: false; error: string } {
+/** One answer in wire form, with what was repaired in it, or the reason it cannot be sent. */
+export function toAnswer(input: unknown): { ok: true; answer: Answer; warnings?: [string, string][] } | { ok: false; error: string } {
   if (!input || typeof input !== "object") return { ok: false, error: "an answer must be an object" };
   const a = input as Record<string, unknown>;
   const q = a.questionKey;
@@ -236,10 +245,13 @@ export function toAnswer(input: unknown): { ok: true; answer: Answer } | { ok: f
           : { question_key: q, kind: "numeric", value: a.value, unit: a.unit as string },
       };
     }
-    case "text":
-      return typeof a.value === "string" && codePointLength(a.value) <= 1000
-        ? { ok: true, answer: { question_key: q, kind: "text", value: a.value } }
+    case "text": {
+      const warnings: [string, string][] = [];
+      const value = repaired(a.value, q, warnings);
+      return typeof value === "string" && codePointLength(value) <= 1000
+        ? { ok: true, answer: { question_key: q, kind: "text", value }, ...(warnings.length ? { warnings } : {}) }
         : { ok: false, error: `${q}: a text answer is at most 1,000 characters` };
+    }
     default:
       return { ok: false, error: `${q}: unknown answer kind ${JSON.stringify(a.kind)}` };
   }
