@@ -47,6 +47,7 @@ export type {
   OnboardingStepResponse,
   PurchaseProduct,
   PurchaseTransaction,
+  PurchaseType,
   TrackEventName,
   TrackPurchaseParams,
 } from "./types";

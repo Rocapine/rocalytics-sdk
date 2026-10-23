@@ -26,9 +26,13 @@ import type {
   OnboardingMetadata,
   OnboardingStepAnswers,
   OnboardingStepResponse,
+  PurchaseType,
   TrackEventName,
   TrackPurchaseParams,
 } from "./types";
+
+// Every PurchaseType: a value from untyped code that is not one is not sent.
+const PURCHASE_TYPES: readonly PurchaseType[] = ["upsell"];
 
 /** SecureStore key of the device's roca id. */
 export const ROCA_ID_KEY = "rocalytics-roca-id";
@@ -169,7 +173,7 @@ export class RocalyticsClient {
   async trackPurchase(params: TrackPurchaseParams): Promise<void> {
     await this.ready;
     if (!this.rocaId) return;
-    const { isTrial, value, currency, originalTransactionIdentifier, product, transaction, redemptionResult } = params;
+    const { isTrial, value, currency, originalTransactionIdentifier, product, transaction, redemptionResult, purchaseType } = params;
     const productIdentifier = (product as { productIdentifier?: unknown } | undefined)?.productIdentifier;
     const experimental: Record<string, unknown> = {};
     if (product !== undefined) experimental.product = product;
@@ -181,9 +185,13 @@ export class RocalyticsClient {
       product_id: params.productId ?? (typeof productIdentifier === "string" ? productIdentifier : undefined),
       price: value,
       currency_code: currency,
+      ...(purchaseType !== undefined && PURCHASE_TYPES.includes(purchaseType) ? { purchase_type: purchaseType } : {}),
       // Omitted when empty: the raw purchase objects, forwarded as given.
       ...(Object.keys(experimental).length > 0 ? { experimental } : {}),
     };
+    if (purchaseType !== undefined && !PURCHASE_TYPES.includes(purchaseType)) {
+      this.report({ code: "unknown-purchase-type", message: `purchaseType ${JSON.stringify(purchaseType)} is not one of ${PURCHASE_TYPES.join(", ")}, so it was not sent` });
+    }
     await this.sendTrack("purchase", properties, `${this.rocaId}-purchase-${originalTransactionIdentifier}`);
   }
 

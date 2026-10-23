@@ -7,6 +7,8 @@ The format follows Keep a Changelog, and the project follows Semantic Versioning
 Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.0 is released, the entries before it may be truncated from this file.
 
 ## [Unreleased]
+### Added
+- `@rocapine/rocalytics-sdk/client`: `trackPurchase` takes an optional `purchaseType` (new type `PurchaseType`, `"upsell"` only for now), sent as `properties.purchase_type` on the `purchase` event. `"upsell"` is a purchase by an existing customer that is revenue but not a new subscription. Without it, the request body is byte-identical to 0.5.0's. A value outside `PurchaseType` is a type error; from untyped code it is not sent, and an `unknown-purchase-type` diagnostic is reported.
 
 ## [0.5.0] - 2026-10-22
 ### Added

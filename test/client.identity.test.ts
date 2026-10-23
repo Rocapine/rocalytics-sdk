@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RocalyticsClient, loadExpoModules, type Diagnostic, type RocalyticsClientOptions } from "../src/client";
+import { RocalyticsClient, loadExpoModules, type Diagnostic, type FetchLike, type RocalyticsClientOptions, type TrackPurchaseParams } from "../src/client";
 import { FakeSecureStore, IOS, ROCA_ID, fakeModules, recordingFetch, stubIntl } from "./client.fakes";
 
 // The identity a device keeps across launches, the once-per-device install
@@ -225,6 +225,50 @@ describe("trackPurchase", () => {
     await client.trackPurchase({ isTrial: true, value: 0, currency: "EUR", originalTransactionIdentifier: "t-2", productId: "p", redemptionResult: { code: "abc" } });
     const body = http.requests[http.requests.length - 1].body as { properties: Record<string, unknown> };
     expect(body.properties.experimental).toEqual({ redemption_result: { code: "abc" } });
+  });
+
+  describe("purchaseType", () => {
+    const PARAMS = { isTrial: false, value: 4.99, currency: "EUR", originalTransactionIdentifier: "t-3", productId: "p", transaction: { id: "x" } } as const;
+    // The raw request body, as sent: recordingFetch parses it, which would hide key order and formatting.
+    const purchaseBody = async (params: TrackPurchaseParams, onDiagnostic?: (d: Diagnostic) => void) => {
+      const bodies: string[] = [];
+      const http = recordingFetch();
+      const fetch: FetchLike = async (url, init) => {
+        if (new URL(url).pathname === "/functions/v1/track") bodies.push(init.body ?? "");
+        return http.fetch(url, init);
+      };
+      const store = new FakeSecureStore({ [KEY]: ROCA_ID, "rocadata-install-tracked": "true" });
+      const client = new RocalyticsClient({ modules: fakeModules(IOS, store), fetch, clock: { now: () => 0 }, onDiagnostic });
+      await client.trackPurchase(params);
+      return bodies[bodies.length - 1];
+    };
+
+    it("is sent as properties.purchase_type when set", async () => {
+      const body = JSON.parse(await purchaseBody({ ...PARAMS, purchaseType: "upsell" }));
+      expect(body.properties.purchase_type).toBe("upsell");
+    });
+
+    it("absent, the body is byte-identical to the one sent before the field existed", async () => {
+      // Captured from 0.5.0's trackPurchase with these PARAMS.
+      const V0_5_0 = '{"name":"purchase","deduplication_id":"6f1c2a4e-8b3d-4c5e-9f70-1a2b3c4d5e6f-purchase-t-3","properties":{"is_trial":false,"original_transaction_identifier":"t-3","product_id":"p","price":4.99,"currency_code":"EUR","experimental":{"transaction":{"id":"x"}}},"device_context":{"ip":"203.0.113.7","user_agent":"Example/2.4.0 (Apple iPhone 15 Pro; iOS 18.1; en-US)","device_model":"iPhone 15 Pro","device_brand":"Apple","device_manufacturer":"Apple","os_name":"iOS","os_version":"18.1","screen_width":393,"screen_height":852,"screen_scale":3,"timezone":"Europe/Paris","locale":"en-US","app_version":"2.4.0","app_build":"412"}}';
+      expect(await purchaseBody({ ...PARAMS })).toBe(V0_5_0);
+      expect(await purchaseBody({ ...PARAMS, purchaseType: undefined })).toBe(V0_5_0);
+    });
+
+    it("set, the body differs only by that one property", async () => {
+      const without = JSON.parse(await purchaseBody({ ...PARAMS }));
+      const withType = JSON.parse(await purchaseBody({ ...PARAMS, purchaseType: "upsell" }));
+      expect(withType).toEqual({ ...without, properties: { ...without.properties, purchase_type: "upsell" } });
+    });
+
+    it("an unknown value is a type error, and at runtime is not sent but reported", async () => {
+      const diagnostics: Diagnostic[] = [];
+      const before = await purchaseBody({ ...PARAMS });
+      // @ts-expect-error not a PurchaseType
+      const body = await purchaseBody({ ...PARAMS, purchaseType: "renewal" }, (d) => diagnostics.push(d));
+      expect(body).toBe(before);
+      expect(diagnostics.map((d) => d.code)).toEqual(["unknown-purchase-type"]);
+    });
   });
 });
 
