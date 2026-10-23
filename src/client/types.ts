@@ -54,6 +54,13 @@ export type PurchaseProduct = object;
 /** A store transaction, from any purchase SDK. Forwarded whole under `experimental.transaction`. */
 export type PurchaseTransaction = object;
 
+/**
+ * What kind of purchase this is, when it is not an ordinary one.
+ * - `upsell`: a purchase by an existing customer that is revenue but not a
+ *   new subscription.
+ */
+export type PurchaseType = "upsell";
+
 export type TrackPurchaseParams = {
   isTrial: boolean;
   /** The price charged: 0 for a free trial. */
@@ -68,6 +75,8 @@ export type TrackPurchaseParams = {
   transaction?: PurchaseTransaction;
   /** A web-checkout redemption result, for a purchase made outside the store. Forwarded under `experimental.redemption_result`. */
   redemptionResult?: unknown;
+  /** Sent as `properties.purchase_type`. Omit for an ordinary purchase. */
+  purchaseType?: PurchaseType;
 };
 
 /** Answers given on one onboarding step, by question or element id. */

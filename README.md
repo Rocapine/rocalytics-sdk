@@ -369,6 +369,8 @@ export function setUpOnboardingTracking(storage: KeyValueStorage, context: () =>
 
 `new RocalyticsClient(options?)`. Every option is for tests or unusual hosts: `modules` (your own native modules, or `null` to run inert), `fetch`, `baseUrl`, `clock`, `onDiagnostic` (default `console.warn`) and `identifyOnStart`.
 
+`trackPurchase`'s `purchaseType` marks a purchase that is not an ordinary one, sent as `properties.purchase_type`. Its one value today is `"upsell"`: a purchase by an existing customer that is revenue but not a new subscription. Omit it for every other purchase; the event is then sent exactly as before. Any other value is a type error, and one passed from untyped code is not sent and is reported as an `unknown-purchase-type` diagnostic.
+
 `identifyOnStart` (default `true`) controls the identify the client sends at start-up, `{ idfv, android_id, locale }` with the device locale. Pass `false` when the app already identifies the device itself with richer fields: otherwise every launch also sends that thinner identify, and its `locale` (the device's) can disagree with the one the app sends (the language picked in the app), so whichever lands last wins. With `false`, start-up still reads or mints the roca id and still sends `install` once, but sends no identify. The app must then call `identify()` before anything that needs the device's identity row, such as `sendOnboardingRun` (its endpoint answers 404 for a roca id that was never identified).
 
 | Member | |
@@ -376,7 +378,7 @@ export function setUpOnboardingTracking(storage: KeyValueStorage, context: () =>
 | `ready` | Resolves once the client has started, or has gone inert. Never rejects. |
 | `rocaId` | The device's id. Null before `ready`, and when inert. |
 | `track(name, properties?)`, `trackEvent(...)` | An analytics event: `install`, `onboarding_completed`, `purchase`, `subscription_started` or `trial_started`. |
-| `trackPurchase(params)` | `purchase`, deduplicated per original transaction. `{ isTrial, value, currency, originalTransactionIdentifier, productId?, product?, transaction?, redemptionResult? }`. |
+| `trackPurchase(params)` | `purchase`, deduplicated per original transaction. `{ isTrial, value, currency, originalTransactionIdentifier, productId?, product?, transaction?, redemptionResult?, purchaseType? }`. |
 | `identify(identifiers)` | Attaches identifiers (`user_id`, `revenue_cat_id`, `adjust_attribution`, ...) to the identity. |
 | `trackCustomEvent(name, properties?, dedupSuffix?)` | An event with any name, passed on by the API to drive automations rather than stored as an analytics event. Deduplicated on `${rocaId}-${name}`, plus `-${dedupSuffix}` when given. |
 | `trackOnboarding(stepId, answers?, metadata?)` | The pre-v1 onboarding calls, unchanged. Resends every step seen so far. |
