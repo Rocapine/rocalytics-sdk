@@ -1,2 +1,2 @@
 /** This package's version, sent as `context.library_version`. A test keeps it equal to package.json. */
-export const LIBRARY_VERSION = "0.6.0";
+export const LIBRARY_VERSION = "0.7.0";
