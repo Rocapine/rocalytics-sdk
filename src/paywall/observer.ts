@@ -31,7 +31,11 @@ export interface PaywallPresentationInfo {
   renderMode: "elements" | "custom" | "external";
   billing: "store" | "stripe";
   surface: PaywallSurface;
-  /** The catalog's variant, or the paywall service's experiment variant. */
+  /**
+   * The catalog's variant, or the paywall service's experiment variant. A
+   * Studio-served paywall reports `"main"` for the parent paywall: pass the
+   * onboarding SDK's resolved paywall `variantKey`.
+   */
   variantKey?: string;
   deploymentId?: string;
   /** Only with surface `paywall_step`. */

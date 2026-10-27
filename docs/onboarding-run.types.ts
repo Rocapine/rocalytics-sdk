@@ -45,6 +45,12 @@ export interface StudioLinks {
   onboarding_id?: string | null;
   deployment_id?: string | null;
   audience_id?: string | null;
+  /**
+   * Which variant of the Studio onboarding was served: the reserved value
+   * `main` for the parent onboarding, or the variant's key. A Studio link, so
+   * distinct from `onboarding.variant_key`, the app's own in-flow variant.
+   */
+  variant_key?: string | null;
 }
 
 /** Captured once, at run start, and repeated unchanged in every snapshot. */
