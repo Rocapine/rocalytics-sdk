@@ -56,7 +56,8 @@
       "properties": {
         "onboarding_id": { "$ref": "#/$defs/link" },
         "deployment_id": { "$ref": "#/$defs/link" },
-        "audience_id": { "$ref": "#/$defs/link" }
+        "audience_id": { "$ref": "#/$defs/link" },
+        "variant_key": { "$ref": "#/$defs/link" }
       }
     },
     "context": {

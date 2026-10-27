@@ -95,7 +95,7 @@ The last of three sends of a purchased presentation on Android:
 | `paywall.audience_id` | string \| null | The audience that matched, if the catalog carried one. Null for a paywall the Studio did not serve. |
 | `paywall.render_mode` | `elements` \| `custom` \| `external` | How the paywall was rendered. `external`: by a third-party paywall service. |
 | `paywall.billing` | `store` \| `stripe` | The paywall's billing path. |
-| `paywall.variant_key`, `paywall.deployment_id` | string, optional | Present only when the catalog carries them. `variant_key` also carries a paywall service's experiment variant, when it has one. |
+| `paywall.variant_key`, `paywall.deployment_id` | string, optional | Present only when the catalog carries them. `variant_key` also carries a paywall service's experiment variant, when it has one. A Studio-served paywall reports its variant's key, and the reserved value `"main"` for the parent paywall. |
 | `paywall.placement` | string, optional, 1 to 128 | v1.1. The app's trigger name for the paywall. Required with provider `external` (P15). |
 | `paywall.external_paywall_id` | string, optional, 1 to 128 | v1.1. The non-Studio paywall's id: the service's paywall identifier, or the app's own variant key for `native`. Required with provider `external` or `native` (P15). |
 | `paywall.provider_name` | string, optional, 1 to 32 | v1.1. Free text naming the paywall service (P16). |

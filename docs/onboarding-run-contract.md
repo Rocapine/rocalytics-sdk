@@ -61,7 +61,7 @@ The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119
 
 ## 2. A complete payload
 
-A run is sent several times, and each send is a snapshot of everything so far. Below are two snapshots of the same run. The run is Studio-served, so its `onboarding.key` is the Studio onboarding id and its `onboarding.version` the deployment id ([3.1](#31-identity-d1-d2-d25)). Together the two snapshots use every optional part of the shape except `variant_key` (shown in 3.1) and `truncated` (shown in [3.9](#39-overflow-d26)).
+A run is sent several times, and each send is a snapshot of everything so far. Below are two snapshots of the same run. The run is Studio-served, so its `onboarding.key` is the Studio onboarding id and its `onboarding.version` the deployment id ([3.1](#31-identity-d1-d2-d25)). Together the two snapshots use every optional part of the shape except `onboarding.variant_key` and `studio.variant_key` (both described in 3.1) and `truncated` (shown in [3.9](#39-overflow-d26)).
 
 The first send shown here is taken mid-flow. The user is on `experience`, so its `exited_at` is null:
 
@@ -242,11 +242,12 @@ A **key** is 1 to 128 characters from `A–Z a–z 0–9 _ . : -`, starting with
 | `onboarding.version` | yes | The flow's revision: 1 to 64 characters from `A–Z a–z 0–9 _ . : + -`, starting with a letter or a digit. See [section 8](#8-versioning-d19-d20). |
 | `onboarding.variant_key` | no | An in-flow variant, for an app that runs one flow under one key with its own variants. Not set for a Studio-served run. Absent or null means the run is not in such a test. |
 | `studio.onboarding_id`, `studio.deployment_id`, `studio.audience_id` | no | Links to Studio records. Opaque strings of 1 to 128 characters; a numeric id is sent in decimal. |
+| `studio.variant_key` | no | Which variant of the Studio onboarding was served: the reserved value `"main"` for the parent onboarding, or the variant's key. 1 to 128 characters, like the other links. Not `onboarding.variant_key`, and never part of the run's identity. |
 
 For a Studio-served flow, the tracker uses the Studio onboarding id as `onboarding.key` and the deployment id as `onboarding.version`, unless the app declares its own. A Studio-served draft or preview MUST send `onboarding.version` `"draft"` (D21), because it has no deployment id. A run's identity MUST NOT change between its snapshots ([section 5](#5-transport-d4-d12-d13-d27) rejects a change).
 
 **A/B tests (D25).** There are two kinds, and they are identified differently:
-- **Studio-served arms.** Each arm of a Studio A/B test is its own Studio onboarding, so each arm keeps its **own `onboarding.key`**, with its own versions and its own manifest. Arms are compared as separate keys: one funnel per key, side by side. A Studio-served run does not set `variant_key`.
+- **Studio-served arms.** Each arm of a Studio A/B test is its own Studio onboarding, so each arm keeps its **own `onboarding.key`**, with its own versions and its own manifest. Arms are compared as separate keys: one funnel per key, side by side. A Studio-served run does not set `onboarding.variant_key`. It may set `studio.variant_key`, the Studio's label for the arm it served (`"main"` for the parent onboarding); that is a link, like `studio.deployment_id`, and is not part of the identity.
 - **In-flow variants.** An app that runs one flow, under one key and one manifest, and varies something inside it (copy, order of options, an intro screen chosen by a slot) sets `variant_key` on each run. Its funnel can then be split by `variant_key`.
 
 A hand-coded flow running an in-flow variant:
@@ -985,6 +986,7 @@ The server converts each stored pre-v1 snapshot into a v1-shaped row. Such rows 
 | `onboarding.version` | `legacy:<deployment id>`, using the deployment resolved below, or `legacy` when none can be resolved. |
 | `onboarding.variant_key` | null. |
 | `studio.onboarding_id` | `onboardingId`. |
+| `studio.variant_key` | null. |
 | `studio.audience_id` | `audienceId`, unless it is `"none"`. That value means no audience matched, so the link is null. |
 | `studio.deployment_id` | `deployment_id` if the sender set it. Otherwise it is resolved by time (D23): the deployment live for the run's audience when the row was first received. An audience can pin a deployment, so the audience's own deployment is used, not the onboarding's latest. Null when it cannot be resolved. |
 | `context.platform` | From the transport. |

@@ -7,6 +7,13 @@ The format follows Keep a Changelog, and the project follows Semantic Versioning
 Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.0 is released, the entries before it may be truncated from this file.
 
 ## [Unreleased]
+### Added
+- `@rocapine/rocalytics-sdk/onboarding`: `start({ studio: { variantKey } })`, sent as the new optional link `studio.variant_key` (`StudioLinks.variant_key`): which variant of the Studio onboarding was served, `"main"` for the parent. Validated like the other Studio links (1 to 128 characters, a U+0000 or lone surrogate repaired); any other value is `invalid-start`. Pass the onboarding SDK's resolved `metadata.variantKey`.
+  - It is not `onboarding.variant_key`, the app's in-flow variant. The two are sent apart, and `studio.variantKey` alone does not make a run Studio-served, so it never drops a hand-coded run's own `variantKey`.
+  - `@rocapine/rocalytics-sdk/client`: the onboarding sink's `onboarding_metadata` carries it as `studio_variant_key`, never as `variant_key`.
+  - A run without it sends a body byte-identical to 0.6.0's.
+  - Requires an ingest that accepts `studio.variant_key`: the `studio` object is closed, so an ingest that does not rejects every snapshot carrying it.
+
 
 ## [0.6.0] - 2026-10-23
 ### Added

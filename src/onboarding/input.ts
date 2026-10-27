@@ -29,6 +29,13 @@ export interface StudioInput {
   /** Null and undefined both mean absent; a Studio-served run with none is a draft. */
   deploymentId?: string | null;
   audienceId?: string | null;
+  /**
+   * The served variant of the Studio onboarding, sent as `studio.variant_key`:
+   * `"main"` for the parent onboarding. Pass the onboarding SDK's resolved
+   * `metadata.variantKey`. Not `onboarding.variantKey`, which is the app's own
+   * in-flow variant.
+   */
+  variantKey?: string | null;
   /** A Studio draft or preview: always sent as version `draft`. */
   draft?: boolean;
 }
@@ -108,6 +115,7 @@ export function validateStart(options: StartOptions): { ok: true; value: ValidSt
         ["onboarding_id", studioIn.onboardingId],
         ["deployment_id", studioIn.deploymentId],
         ["audience_id", studioIn.audienceId],
+        ["variant_key", studioIn.variantKey],
       ];
       for (const [field, raw] of links) {
         if (raw === undefined || raw === null) continue;
@@ -118,6 +126,9 @@ export function validateStart(options: StartOptions): { ok: true; value: ValidSt
       if (Object.keys(studio).length === 0) studio = undefined;
     }
   }
+  // A Studio record link makes the run Studio-served; studio.variant_key alone
+  // does not, so it never drops a hand-coded run's own onboarding.variant_key.
+  const studioServed = !!studio && (studio.onboarding_id != null || studio.deployment_id != null || studio.audience_id != null);
   const draft = !!studioIn?.draft;
 
   // Identity.
@@ -132,8 +143,8 @@ export function validateStart(options: StartOptions): { ok: true; value: ValidSt
     onboarding = { key, version: draft ? "draft" : version };
     if (variantKey !== undefined && variantKey !== null) {
       // Studio-served means it carries a Studio link (or is a Studio draft), not that a `studio` object was passed.
-      if (studio || draft) {
-        warnings.push(["studio-variant-dropped", "a Studio-served run does not carry variant_key: each Studio arm is its own onboarding key"]);
+      if (studioServed || draft) {
+        warnings.push(["studio-variant-dropped", "a Studio-served run does not carry variant_key: each Studio arm is its own onboarding key, and studio.variantKey names the served Studio variant"]);
       } else if (!isKey(variantKey)) errors.push("onboarding.variantKey must be a key");
       else onboarding.variant_key = variantKey;
     }

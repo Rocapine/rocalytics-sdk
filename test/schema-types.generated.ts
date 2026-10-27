@@ -17,6 +17,7 @@ export type SnapshotFromSchema = ({
     onboarding_id?: string | null;
     deployment_id?: string | null;
     audience_id?: string | null;
+    variant_key?: string | null;
   };
   context: {
     app_version: string;
@@ -77,6 +78,7 @@ export type SnapshotFromSchema = ({
     onboarding_id?: string | null;
     deployment_id?: string | null;
     audience_id?: string | null;
+    variant_key?: string | null;
   };
   context: {
     app_version: string;

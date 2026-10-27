@@ -40,8 +40,9 @@ export function toOnboardingRunBody(snapshot: OnboardingRunSnapshot): Onboarding
  *   (the Studio onboarding) or, with none, `onboarding_id` (the onboarding
  *   key, as a hand-coded sender sets it), `audienceId`, `deployment_id`,
  *   `locale` (from the run's context) and `draft: true` for a draft. It also
- *   carries `onboarding_key`, `onboarding_version`, `variant_key`, `run_id`
- *   and `seq`, which section 9 does not read.
+ *   carries `onboarding_key`, `onboarding_version`, `variant_key` (the app's
+ *   in-flow variant), `studio_variant_key` (the served Studio variant),
+ *   `run_id` and `seq`, which section 9 does not read.
  * - `sent_at` is NOT the device's send time. The ingest keeps one snapshot
  *   per sender and replaces it only when the incoming `sent_at` is strictly
  *   later, answering 2xx either way, so two sends in one millisecond, or a
@@ -71,6 +72,9 @@ export function toOnboardingResponsePayload(snapshot: OnboardingRunSnapshot): On
   set("onboarding_key", snapshot.onboarding.key);
   set("onboarding_version", snapshot.onboarding.version);
   set("variant_key", snapshot.onboarding.variant_key);
+  // The served Studio variant, under its own key: never `variant_key`, which is
+  // the app's in-flow variant above.
+  set("studio_variant_key", snapshot.studio?.variant_key);
   set("run_id", snapshot.run_id);
   set("seq", snapshot.seq);
   return {
