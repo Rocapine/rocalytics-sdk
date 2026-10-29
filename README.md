@@ -368,11 +368,13 @@ export function setUpOnboardingTracking(storage: KeyValueStorage, context: () =>
 
 ### API
 
-`new RocalyticsClient(options?)`. Every option is for tests or unusual hosts: `modules` (your own native modules, or `null` to run inert), `fetch`, `baseUrl`, `clock`, `onDiagnostic` (default `console.warn`) and `identifyOnStart`.
+`new RocalyticsClient(options?)`. Every option is for tests or unusual hosts: `modules` (your own native modules, or `null` to run inert), `fetch`, `baseUrl`, `clock`, `onDiagnostic` (default `console.warn`) and `identifyOnStart`. Two are for ad attribution: `installPing` and `attributionBaseUrl`.
 
 `trackPurchase`'s `purchaseType` marks a purchase that is not an ordinary one, sent as `properties.purchase_type`. Its one value today is `"upsell"`: a purchase by an existing customer that is revenue but not a new subscription. Omit it for every other purchase; the event is then sent exactly as before. Any other value is a type error, and one passed from untyped code is not sent and is reported as an `unknown-purchase-type` diagnostic.
 
 `identifyOnStart` (default `true`) controls the identify the client sends at start-up, `{ idfv, android_id, locale }` with the device locale. Pass `false` when the app already identifies the device itself with richer fields: otherwise every launch also sends that thinner identify, and its `locale` (the device's) can disagree with the one the app sends (the language picked in the app), so whichever lands last wins. With `false`, start-up still reads or mints the roca id and still sends `install` once, but sends no identify. The app must then call `identify()` before anything that needs the device's identity row, such as `sendOnboardingRun` (its endpoint answers 404 for a roca id that was never identified).
+
+`installPing` (default `true`; pass `false` to turn it off) follows the `install` event with `POST https://track.rocapi.ne/install` (`attributionBaseUrl` moves it), carrying the identity headers and no body. That attribution worker also logs the app's ad clicks; it sees both on the same network path and IP family, which the Rocalytics API (IPv4 only) cannot, so it can match an install to its click. The ping is sent once, with the install, and only after the install event succeeds. A failed ping is reported as an `install-ping-failed` diagnostic and is not retried.
 
 | Member | |
 |---|---|

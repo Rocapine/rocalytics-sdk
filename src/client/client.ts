@@ -9,6 +9,7 @@ import { rocalyticsOutcome, toOnboardingRunBody } from "./onboardingSink";
 import {
   buildDemandScoreRequest,
   buildIdentifyRequest,
+  buildInstallPingRequest,
   buildOnboardingResponseRequest,
   buildPaywallPresentationRequest,
   buildTrackRequest,
@@ -70,6 +71,15 @@ export interface RocalyticsClientOptions {
    * endpoint answers 404 for a roca id that has never been identified.
    */
   identifyOnStart?: boolean;
+  /**
+   * Whether the `install` event is followed by a ping to the attribution
+   * worker (`POST <attributionBaseUrl>/install`), which matches installs to ad
+   * clicks. Default `true`; pass `false` to turn it off. Sent once, with the install; a failed ping is
+   * reported as `install-ping-failed` and never retried.
+   */
+  installPing?: boolean;
+  /** Defaults to `https://track.rocapi.ne`. */
+  attributionBaseUrl?: string;
 }
 
 const intlOptions = () => Intl.DateTimeFormat().resolvedOptions();
@@ -304,6 +314,7 @@ export class RocalyticsClient {
         const installTime = await native.application.getInstallationTimeAsync();
         await this.sendTrack("install", { install_time: installTime });
         await store.setItemAsync(INSTALL_TRACKED_KEY, "true");
+        if (this.options.installPing !== false) await this.sendInstallPing();
       }
     } catch (error) {
       this.report({ code: "init-failed", message: message(error) });
@@ -410,6 +421,15 @@ export class RocalyticsClient {
   private async sendIdentify(identifiers: IdentifyParams): Promise<void> {
     const payload = Object.fromEntries(Object.entries(identifiers).filter(([, v]) => v != null));
     await this.send(buildIdentifyRequest(this.context(), payload), "identify");
+  }
+
+  // Best-effort: the install is already recorded, so a failure is reported, not thrown.
+  private async sendInstallPing(): Promise<void> {
+    try {
+      await this.send(buildInstallPingRequest(this.context(), this.options.attributionBaseUrl), "install-ping");
+    } catch (error) {
+      this.report({ code: "install-ping-failed", message: message(error) });
+    }
   }
 
   private async sendTrack(name: string, properties: Record<string, unknown>, deduplicationId?: string, customEvent?: boolean): Promise<void> {

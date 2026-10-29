@@ -2,6 +2,8 @@ import type { DemandScoreSignals, IdentifyParams, OnboardingResponsePayload, Onb
 import type { PaywallPresentationSnapshot } from "../paywall/contract";
 
 export const ROCALYTICS_API_BASE = "https://rocalytics-api.rocapine.io";
+/** The attribution worker: the install ping goes here, through Cloudflare like the ad click. */
+export const ROCALYTICS_ATTRIBUTION_BASE = "https://track.rocapi.ne";
 
 /** What every request carries: the device's roca id, the app id and the platform. There is no auth token. */
 export interface RequestContext {
@@ -46,6 +48,15 @@ const post = (context: RequestContext, endpoint: string, body?: unknown): Rocaly
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   },
 });
+
+/**
+ * The attribution worker's `/install`: no body, only the identity headers. It
+ * lets the worker see the install's IP on the same network path and IP family
+ * as the ad click, which the API above (IPv4 only) cannot.
+ */
+export function buildInstallPingRequest(context: RequestContext, attributionBaseUrl: string = ROCALYTICS_ATTRIBUTION_BASE): RocalyticsRequest {
+  return { url: `${attributionBaseUrl}/install`, init: { method: "POST", headers: rocalyticsHeaders(context) } };
+}
 
 /** `/identify`. The payload is sent as given: drop null identifiers first (the client does). */
 export function buildIdentifyRequest(context: RequestContext, payload: Partial<IdentifyParams>): RocalyticsRequest {

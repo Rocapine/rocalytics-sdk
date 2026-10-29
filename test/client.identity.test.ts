@@ -15,10 +15,12 @@ beforeEach(() => {
 });
 afterEach(() => restoreIntl());
 
-function start(store: FakeSecureStore, device = IOS, options: Pick<RocalyticsClientOptions, "identifyOnStart"> = {}) {
+// The install ping is off here: these tests are about the API requests. The
+// "installPing" block covers it.
+function start(store: FakeSecureStore, device = IOS, options: Pick<RocalyticsClientOptions, "identifyOnStart" | "installPing"> = {}) {
   const http = recordingFetch();
   const diagnostics: Diagnostic[] = [];
-  const client = new RocalyticsClient({ modules: fakeModules(device, store), fetch: http.fetch, onDiagnostic: (d) => diagnostics.push(d), ...options });
+  const client = new RocalyticsClient({ modules: fakeModules(device, store), fetch: http.fetch, onDiagnostic: (d) => diagnostics.push(d), installPing: false, ...options });
   return { client, http, diagnostics };
 }
 
@@ -118,6 +120,64 @@ describe("the install event", () => {
   });
 });
 
+describe("installPing", () => {
+  function startWithPing(store: FakeSecureStore, respond: Parameters<typeof recordingFetch>[0] = {}, options: RocalyticsClientOptions = {}) {
+    const http = recordingFetch(respond);
+    const diagnostics: Diagnostic[] = [];
+    const client = new RocalyticsClient({ modules: fakeModules(IOS, store), fetch: http.fetch, onDiagnostic: (d) => diagnostics.push(d), ...options });
+    return { client, http, diagnostics };
+  }
+
+  it("off with installPing: false: a fresh device sends no ping", async () => {
+    const { client, http } = startWithPing(new FakeSecureStore(), {}, { installPing: false });
+    await client.ready;
+    expect(http.requests.map((r) => r.url)).not.toContain("https://track.rocapi.ne/install");
+  });
+
+  it("on by default: the install is followed by one POST to the attribution worker, with the identity headers and no body", async () => {
+    const store = new FakeSecureStore();
+    const { client, http, diagnostics } = startWithPing(store);
+    await client.ready;
+    expect(http.requests.map((r) => r.url)).toEqual([
+      "https://rocalytics-api.rocapine.io/functions/v1/identify",
+      "https://rocalytics-api.rocapine.io/functions/v1/track",
+      "https://track.rocapi.ne/install",
+    ]);
+    expect(http.requests[2]).toEqual({
+      url: "https://track.rocapi.ne/install",
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Roca-ID": ROCA_ID, "X-Application-ID": IOS.applicationId, "X-Platform": "ios" },
+      body: null,
+    });
+    expect(diagnostics).toEqual([]);
+
+    const again = startWithPing(store);
+    await again.client.ready;
+    expect(again.http.paths()).toEqual(["/functions/v1/identify"]);
+  });
+
+  it("on: attributionBaseUrl moves the ping", async () => {
+    const { client, http } = startWithPing(new FakeSecureStore(), {}, { attributionBaseUrl: "https://track.example.com" });
+    await client.ready;
+    expect(http.requests[2].url).toBe("https://track.example.com/install");
+  });
+
+  it("on: a failed ping is reported, and the install still counts as sent", async () => {
+    const store = new FakeSecureStore();
+    const { client, http, diagnostics } = startWithPing(store, { "/install": { status: 503 } });
+    await client.ready;
+    expect(http.paths()).toEqual(["/functions/v1/identify", "/functions/v1/track", "/install"]);
+    expect(diagnostics).toEqual([{ code: "install-ping-failed", message: "[ROCALYTICS] install-ping failed: 503" }]);
+    expect(store.map.get("rocadata-install-tracked")).toBe("true");
+  });
+
+  it("on: no ping when the install event itself fails", async () => {
+    const { client, http } = startWithPing(new FakeSecureStore(), { "/functions/v1/track": { status: 500 } });
+    await client.ready;
+    expect(http.paths()).toEqual(["/functions/v1/identify", "/functions/v1/track"]);
+  });
+});
+
 describe("identifyOnStart", () => {
   it.each([{}, { identifyOnStart: true }])("%o: start-up identifies the device, then sends install", async (options) => {
     const store = new FakeSecureStore();
@@ -148,7 +208,7 @@ describe("identifyOnStart", () => {
     modules.application.getIosIdForVendorAsync = () => Promise.reject(new Error("idfv unavailable"));
     const http = recordingFetch();
     const diagnostics: Diagnostic[] = [];
-    const client = new RocalyticsClient({ modules, fetch: http.fetch, onDiagnostic: (d) => diagnostics.push(d), identifyOnStart: false });
+    const client = new RocalyticsClient({ modules, fetch: http.fetch, onDiagnostic: (d) => diagnostics.push(d), identifyOnStart: false, installPing: false });
     await client.ready;
     expect(http.paths()).toEqual(["/functions/v1/track"]);
     expect(diagnostics).toEqual([]);
@@ -281,7 +341,8 @@ describe("console output with the default onDiagnostic", () => {
     await client.trackPurchase({ isTrial: false, value: 9.99, currency: "EUR", originalTransactionIdentifier: "t-1", productId: "pro_monthly" });
     await client.trackOnboarding("welcome", { goal: "x" });
     await client.identify({ email: "user@example.com" });
-    expect(http.requests).toHaveLength(5);
+    // identify, install, install ping, purchase, onboarding, identify.
+    expect(http.requests).toHaveLength(6);
     for (const spy of methods) {
       expect(spy).not.toHaveBeenCalled();
       spy.mockRestore();
