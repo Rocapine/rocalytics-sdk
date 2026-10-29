@@ -74,7 +74,7 @@ export interface RocalyticsClientOptions {
   /**
    * Whether the `install` event is followed by a ping to the attribution
    * worker (`POST <attributionBaseUrl>/install`), which matches installs to ad
-   * clicks. Default `false`. Sent once, with the install; a failed ping is
+   * clicks. Default `true`; pass `false` to turn it off. Sent once, with the install; a failed ping is
    * reported as `install-ping-failed` and never retried.
    */
   installPing?: boolean;
@@ -314,7 +314,7 @@ export class RocalyticsClient {
         const installTime = await native.application.getInstallationTimeAsync();
         await this.sendTrack("install", { install_time: installTime });
         await store.setItemAsync(INSTALL_TRACKED_KEY, "true");
-        if (this.options.installPing) await this.sendInstallPing();
+        if (this.options.installPing !== false) await this.sendInstallPing();
       }
     } catch (error) {
       this.report({ code: "init-failed", message: message(error) });

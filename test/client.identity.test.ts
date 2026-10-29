@@ -15,10 +15,12 @@ beforeEach(() => {
 });
 afterEach(() => restoreIntl());
 
-function start(store: FakeSecureStore, device = IOS, options: Pick<RocalyticsClientOptions, "identifyOnStart"> = {}) {
+// The install ping is off here: these tests are about the API requests. The
+// "installPing" block covers it.
+function start(store: FakeSecureStore, device = IOS, options: Pick<RocalyticsClientOptions, "identifyOnStart" | "installPing"> = {}) {
   const http = recordingFetch();
   const diagnostics: Diagnostic[] = [];
-  const client = new RocalyticsClient({ modules: fakeModules(device, store), fetch: http.fetch, onDiagnostic: (d) => diagnostics.push(d), ...options });
+  const client = new RocalyticsClient({ modules: fakeModules(device, store), fetch: http.fetch, onDiagnostic: (d) => diagnostics.push(d), installPing: false, ...options });
   return { client, http, diagnostics };
 }
 
@@ -122,17 +124,17 @@ describe("installPing", () => {
   function startWithPing(store: FakeSecureStore, respond: Parameters<typeof recordingFetch>[0] = {}, options: RocalyticsClientOptions = {}) {
     const http = recordingFetch(respond);
     const diagnostics: Diagnostic[] = [];
-    const client = new RocalyticsClient({ modules: fakeModules(IOS, store), fetch: http.fetch, onDiagnostic: (d) => diagnostics.push(d), installPing: true, ...options });
+    const client = new RocalyticsClient({ modules: fakeModules(IOS, store), fetch: http.fetch, onDiagnostic: (d) => diagnostics.push(d), ...options });
     return { client, http, diagnostics };
   }
 
-  it("off by default: a fresh device sends no ping", async () => {
-    const { client, http } = start(new FakeSecureStore());
+  it("off with installPing: false: a fresh device sends no ping", async () => {
+    const { client, http } = startWithPing(new FakeSecureStore(), {}, { installPing: false });
     await client.ready;
     expect(http.requests.map((r) => r.url)).not.toContain("https://track.rocapi.ne/install");
   });
 
-  it("on: the install is followed by one POST to the attribution worker, with the identity headers and no body", async () => {
+  it("on by default: the install is followed by one POST to the attribution worker, with the identity headers and no body", async () => {
     const store = new FakeSecureStore();
     const { client, http, diagnostics } = startWithPing(store);
     await client.ready;
@@ -206,7 +208,7 @@ describe("identifyOnStart", () => {
     modules.application.getIosIdForVendorAsync = () => Promise.reject(new Error("idfv unavailable"));
     const http = recordingFetch();
     const diagnostics: Diagnostic[] = [];
-    const client = new RocalyticsClient({ modules, fetch: http.fetch, onDiagnostic: (d) => diagnostics.push(d), identifyOnStart: false });
+    const client = new RocalyticsClient({ modules, fetch: http.fetch, onDiagnostic: (d) => diagnostics.push(d), identifyOnStart: false, installPing: false });
     await client.ready;
     expect(http.paths()).toEqual(["/functions/v1/track"]);
     expect(diagnostics).toEqual([]);
@@ -339,7 +341,8 @@ describe("console output with the default onDiagnostic", () => {
     await client.trackPurchase({ isTrial: false, value: 9.99, currency: "EUR", originalTransactionIdentifier: "t-1", productId: "pro_monthly" });
     await client.trackOnboarding("welcome", { goal: "x" });
     await client.identify({ email: "user@example.com" });
-    expect(http.requests).toHaveLength(5);
+    // identify, install, install ping, purchase, onboarding, identify.
+    expect(http.requests).toHaveLength(6);
     for (const spy of methods) {
       expect(spy).not.toHaveBeenCalled();
       spy.mockRestore();

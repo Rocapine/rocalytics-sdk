@@ -45,6 +45,8 @@ describe("the packaged client sends what the reference client sends", () => {
       fetch: http.fetch,
       clock: { now: () => now },
       onDiagnostic: () => {},
+      // The reference client only talks to the API; the ping goes to the attribution worker.
+      installPing: false,
     });
 
     const returned: unknown[] = [];
