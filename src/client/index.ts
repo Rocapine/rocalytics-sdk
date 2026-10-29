@@ -19,8 +19,10 @@ export { loadExpoModules } from "./native";
 export type { ApplicationModule, ExpoModuleLoaders, LoadResult, RocalyticsModules } from "./native";
 export {
   ROCALYTICS_API_BASE,
+  ROCALYTICS_ATTRIBUTION_BASE,
   buildDemandScoreRequest,
   buildIdentifyRequest,
+  buildInstallPingRequest,
   buildOnboardingResponseRequest,
   buildPaywallPresentationRequest,
   buildTrackRequest,
