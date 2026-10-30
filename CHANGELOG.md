@@ -7,9 +7,11 @@ The format follows Keep a Changelog, and the project follows Semantic Versioning
 Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.0 is released, the entries before it may be truncated from this file.
 
 ## [Unreleased]
+
+## [0.8.0] - 2026-10-29
 ### Added
 - `@rocapine/rocalytics-sdk/client`: `installPing` option (default `true`; `false` turns it off). The `install` event is followed by `POST https://track.rocapi.ne/install` with the identity headers and no body, so the attribution worker can match the install to the ad click it logged. Sent once, only after the install event succeeds; a failure is an `install-ping-failed` diagnostic, never retried. `attributionBaseUrl` moves it. New exports `buildInstallPingRequest` and `ROCALYTICS_ATTRIBUTION_BASE`.
-  - Off, start-up sends exactly what 0.7.0 sends.
+  - With `installPing: false`, start-up sends exactly what 0.7.0 sends.
 
 ## [0.7.0] - 2026-10-27
 ### Added
