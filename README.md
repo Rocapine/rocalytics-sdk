@@ -444,7 +444,6 @@ import { AppState, Platform } from "react-native";
 export const analytics = createAnalytics({
   appId: Application.applicationId!,           // must be on the ingest's allowlist
   platform: Platform.OS === "ios" ? "ios" : "android",
-  endpoint: "https://<event-ingest>/v1/batch",
   rocaId: () => rocalytics.rocaId,              // events tracked before it resolves are kept
   context: { appVersion: Application.nativeApplicationVersion, osVersion: String(Platform.Version) },
   storage: AsyncStorage,                        // unsent events survive a kill
@@ -457,6 +456,7 @@ analytics.identify({ plan: "pro" });            // amplitude.identify(new Identi
 analytics.reset();                              // logout
 ```
 
+- **Endpoint:** `ROCALYTICS_INGEST_URL` (`https://ingest.rocapi.ne/v1/batch`) unless `endpoint` or `sink` is passed.
 - **Batching:** 50 events, every 15 s, or on `flush()`; one batch in flight; up to 500 per request.
 - **Delivery:** at least once. A transient failure keeps the batch and retries with backoff (1 s, doubling, capped at 60 s) with the same `event_id`s, which the warehouse deduplicates on. `rejected` drops the batch (diagnostic `rejected`).
 - **Offline:** up to `maxQueue` (1,000) events are kept; beyond it the oldest are dropped (diagnostic `queue-full`).

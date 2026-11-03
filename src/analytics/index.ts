@@ -2,6 +2,6 @@
 // (Amplitude-shaped: track, setUserId, identify, reset). Separate from /client's typed
 // attribution `track`, which is unchanged.
 
-export { createAnalytics } from "./tracker";
+export { createAnalytics, ROCALYTICS_INGEST_URL } from "./tracker";
 export type { Analytics, AnalyticsConfig, AnalyticsContext } from "./tracker";
 export type { AnalyticsPlatform, EventBatch, WireEvent } from "./contract";

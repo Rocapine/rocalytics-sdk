@@ -8,7 +8,7 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
 
 ## [Unreleased]
 ### Added
-- `@rocapine/rocalytics-sdk/analytics` (new subpath, experimental): `createAnalytics({ appId, platform, endpoint, rocaId, context, storage })` returns `track(name, properties)`, `setUserId`, `identify` (a `$identify` event carrying `user_properties`), `reset`, `flush`, `idle` and `dispose`. Events are queued on the device and batched to the warehouse ingest (Rocapine/rocalytics-warehouse `services/event-ingest`), with an Amplitude-style `session_id`. Contract: `docs/event-batch.schema.json`. `/client`'s typed `track` is unchanged.
+- `@rocapine/rocalytics-sdk/analytics` (new subpath, experimental): `createAnalytics({ appId, platform, endpoint, rocaId, context, storage })` sends to `ROCALYTICS_INGEST_URL` (`https://ingest.rocapi.ne/v1/batch`) by default and returns `track(name, properties)`, `setUserId`, `identify` (a `$identify` event carrying `user_properties`), `reset`, `flush`, `idle` and `dispose`. Events are queued on the device and batched to the warehouse ingest (Rocapine/rocalytics-warehouse `services/event-ingest`), with an Amplitude-style `session_id`. Contract: `docs/event-batch.schema.json`. `/client`'s typed `track` is unchanged.
 
 ## [0.8.0] - 2026-10-29
 ### Added

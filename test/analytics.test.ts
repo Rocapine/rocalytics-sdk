@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAnalytics, type AnalyticsConfig, type EventBatch } from "../src/analytics";
+import { createAnalytics, ROCALYTICS_INGEST_URL, type AnalyticsConfig, type EventBatch } from "../src/analytics";
 import { memoryStorage } from "../src/core";
 import { flushMicrotasks, ManualTime, MemorySink } from "./fakes";
 
@@ -160,5 +160,25 @@ describe("analytics restart ordering", () => {
     await a.flush();
     const events = sink.last!.events;
     expect(events.find((e) => e.name === "after_logout")!.user_id).toBeNull();
+  });
+});
+
+describe("analytics endpoint", () => {
+  it("defaults to the warehouse ingest", async () => {
+    const calls: string[] = [];
+    const fetch = async (url: string) => { calls.push(url); return { ok: true, status: 200, text: async () => '{"outcome":"accepted"}' }; };
+    const g = globalThis as { fetch?: unknown };
+    const prev = g.fetch;
+    g.fetch = fetch;
+    try {
+      const a = createAnalytics({ appId: "x", platform: "ios", onDiagnostic: () => undefined });
+      a.track("e");
+      await a.flush();
+      a.dispose();
+    } finally {
+      g.fetch = prev;
+    }
+    expect(calls).toEqual([ROCALYTICS_INGEST_URL]);
+    expect(ROCALYTICS_INGEST_URL).toBe("https://ingest.rocapi.ne/v1/batch");
   });
 });

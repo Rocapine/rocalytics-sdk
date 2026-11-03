@@ -7,6 +7,9 @@ import { systemClock, systemTimers, type Clock, type Timers } from "../core/time
 import { LIBRARY_VERSION } from "../version";
 import type { AnalyticsPlatform, EventBatch, WireEvent } from "./contract";
 
+/** The warehouse ingest (Rocapine/rocalytics-warehouse services/event-ingest). */
+export const ROCALYTICS_INGEST_URL = "https://ingest.rocapi.ne/v1/batch";
+
 export interface AnalyticsContext {
   appVersion?: string | null;
   osVersion?: string | null;
@@ -17,7 +20,7 @@ export interface AnalyticsConfig {
   /** Bundle id / package name, as allowlisted by the ingest. */
   appId: string;
   platform: AnalyticsPlatform;
-  /** The ingest's batch URL, e.g. `https://<event-ingest>/v1/batch`. Ignored when `sink` is given. */
+  /** The ingest's batch URL. Default `ROCALYTICS_INGEST_URL`. Ignored when `sink` is given. */
   endpoint?: string;
   sink?: Sink<EventBatch>;
   /**
@@ -86,7 +89,7 @@ export function createAnalytics(config: AnalyticsConfig): Analytics {
   const uuid = config.uuid ?? createUuid(clock);
   const report = safeDiagnostics(config.onDiagnostic);
   const sink: Sink<EventBatch> =
-    config.sink ?? (createHttpSink({ url: config.endpoint ?? "" }) as Sink<EventBatch>);
+    config.sink ?? (createHttpSink({ url: config.endpoint ?? ROCALYTICS_INGEST_URL }) as Sink<EventBatch>);
   const flushAt = Math.max(1, Math.min(config.flushAt ?? 50, MAX_BATCH));
   const intervalMs = config.flushIntervalMs ?? 15_000;
   const maxQueue = Math.max(flushAt, config.maxQueue ?? 1000);
@@ -96,7 +99,6 @@ export function createAnalytics(config: AnalyticsConfig): Analytics {
         report({ code: "storage-failed", message: String(e) }),
       )
     : null;
-  if (!config.sink && !config.endpoint) report({ code: "no-endpoint", message: "no endpoint or sink: events stay queued" });
 
   let state: Persisted = { queue: [], userId: null, session: null };
   let inFlight: Promise<void> | null = null;
