@@ -34,6 +34,10 @@
       "types": "./dist/paywall/index.d.ts",
       "default": "./dist/paywall/index.js"
     },
+    "./analytics": {
+      "types": "./dist/analytics/index.d.ts",
+      "default": "./dist/analytics/index.js"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -49,6 +53,9 @@
       ],
       "paywall": [
         "./dist/paywall/index.d.ts"
+      ],
+      "analytics": [
+        "./dist/analytics/index.d.ts"
       ]
     }
   },
@@ -60,6 +67,7 @@
     "core",
     "client",
     "paywall",
+    "analytics",
     "README.md",
     "CHANGELOG.md"
   ],
@@ -77,7 +85,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "gen:schema-types": "UPDATE_SCHEMA_TYPES=1 vitest run test/schema-types.test.ts test/paywall-schema-types.test.ts",
-    "check:exports": "node scripts/check-exports.mjs"
+    "check:exports": "node scripts/check-exports.mjs",
+    "e2e:analytics": "npm run build && node scripts/e2e-analytics.mjs"
   },
   "peerDependencies": {
     "expo-application": "*",

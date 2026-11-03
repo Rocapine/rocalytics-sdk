@@ -84,11 +84,11 @@ describe("dependencies", () => {
     }
   });
 
-  it("exports exactly the shipped subpaths: /onboarding, /core, /client and /paywall", () => {
-    expect(Object.keys(pkg.exports).sort()).toEqual(["./client", "./core", "./onboarding", "./package.json", "./paywall"]);
-    expect(Object.keys(pkg.typesVersions["*"]).sort()).toEqual(["client", "core", "onboarding", "paywall"]);
-    expect(pkg.files).toEqual(expect.arrayContaining(["client", "paywall"]));
-    for (const sub of ["client", "paywall"]) {
+  it("exports exactly the shipped subpaths: /onboarding, /core, /client, /paywall and /analytics", () => {
+    expect(Object.keys(pkg.exports).sort()).toEqual(["./analytics", "./client", "./core", "./onboarding", "./package.json", "./paywall"]);
+    expect(Object.keys(pkg.typesVersions["*"]).sort()).toEqual(["analytics", "client", "core", "onboarding", "paywall"]);
+    expect(pkg.files).toEqual(expect.arrayContaining(["client", "paywall", "analytics"]));
+    for (const sub of ["client", "paywall", "analytics"]) {
       expect(JSON.parse(fs.readFileSync(path.join(ROOT, `${sub}/package.json`), "utf8"))).toEqual({
         main: `../dist/${sub}/index.js`,
         types: `../dist/${sub}/index.d.ts`,
