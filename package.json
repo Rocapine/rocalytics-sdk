@@ -34,6 +34,10 @@
       "types": "./dist/paywall/index.d.ts",
       "default": "./dist/paywall/index.js"
     },
+    "./analytics": {
+      "types": "./dist/analytics/index.d.ts",
+      "default": "./dist/analytics/index.js"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -49,6 +53,9 @@
       ],
       "paywall": [
         "./dist/paywall/index.d.ts"
+      ],
+      "analytics": [
+        "./dist/analytics/index.d.ts"
       ]
     }
   },
@@ -60,6 +67,7 @@
     "core",
     "client",
     "paywall",
+    "analytics",
     "README.md",
     "CHANGELOG.md"
   ],

@@ -24,8 +24,9 @@ npm install @rocapine/rocalytics-sdk
 | `@rocapine/rocalytics-sdk/core` | Shared building blocks: the sink interface, latest-snapshot delivery, id minting, run context, storage. Internal: exported for custom sinks and future surfaces, with no stability promise beyond what `/onboarding` re-exports. |
 | `@rocapine/rocalytics-sdk/client` | The Rocalytics client, and a sink that delivers the tracker's runs to Rocalytics. Public API. Needs the Expo peers below. |
 | `@rocapine/rocalytics-sdk/paywall` | The paywall presentation tracker. Public API. |
+| `@rocapine/rocalytics-sdk/analytics` | Product analytics events, batched to the warehouse (Amplitude-shaped `track`, `setUserId`, `identify`, `reset`). Public API, experimental. |
 
-The package is for tracking only: it holds no remote-control code. `/onboarding` and `/paywall` never import `/client`, so an app that only tracks onboarding or paywalls installs and bundles no native module.
+The package is for tracking only: it holds no remote-control code. `/onboarding`, `/paywall` and `/analytics` never import `/client`, so an app that only tracks onboarding or paywalls installs and bundles no native module.
 
 ## A hand-coded onboarding
 
@@ -430,6 +431,37 @@ That endpoint answers success with a 2xx and no body, so a 2xx is accepted. Othe
 | identified without `locale` at start-up | The start-up identify now sends the device locale, as the reference does. |
 | read `selectedVersion` or `versions` from `DemandScoreResult` as always present | Both are optional, so a response from before the score was versioned still fits. Check for them. |
 | mocked the copied module in Jest | Mock `@rocapine/rocalytics-sdk/client` instead, or create the client with `modules` and `fetch` stand-ins. |
+
+## Product analytics
+
+`/analytics` sends product events (what Amplitude's `track` carries today) to the Rocalytics warehouse: BigQuery, read by Mitzu. It is separate from `/client`'s typed `track`, which only carries attribution events and is unchanged. Contract: [`docs/event-batch.schema.json`](docs/event-batch.schema.json).
+
+```ts
+import { createAnalytics } from "@rocapine/rocalytics-sdk/analytics";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { AppState, Platform } from "react-native";
+
+export const analytics = createAnalytics({
+  appId: Application.applicationId!,           // must be on the ingest's allowlist
+  platform: Platform.OS === "ios" ? "ios" : "android",
+  endpoint: "https://<event-ingest>/v1/batch",
+  rocaId: () => rocalytics.rocaId,              // events tracked before it resolves are kept
+  context: { appVersion: Application.nativeApplicationVersion, osVersion: String(Platform.Version) },
+  storage: AsyncStorage,                        // unsent events survive a kill
+});
+AppState.addEventListener("change", (s) => s === "background" && analytics.flush());
+
+analytics.setUserId(appUserId);                 // amplitude.setUserId
+analytics.track("workout_started", { workout: "abs" }); // amplitude.track
+analytics.identify({ plan: "pro" });            // amplitude.identify(new Identify().set(...)) → a $identify event
+analytics.reset();                              // logout
+```
+
+- **Batching:** 50 events, every 15 s, or on `flush()`; one batch in flight; up to 500 per request.
+- **Delivery:** at least once. A transient failure keeps the batch and retries with backoff (1 s, doubling, capped at 60 s) with the same `event_id`s, which the warehouse deduplicates on. `rejected` drops the batch (diagnostic `rejected`).
+- **Offline:** up to `maxQueue` (1,000) events are kept; beyond it the oldest are dropped (diagnostic `queue-full`).
+- **Sessions:** `session_id` is the session's start in ms, and a new session starts after 5 minutes without an event, as in Amplitude React Native. No `session_start` / `session_end` events are sent.
+- **Never throws:** a bad name (empty or over 128 characters) is diagnostic `invalid-name`.
 
 ## Development
 

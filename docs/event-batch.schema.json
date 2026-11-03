@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:rocalytics-sdk:event-batch:1",
+  "title": "Analytics event batch",
+  "description": "POST body of the warehouse ingest (Rocapine/rocalytics-warehouse services/event-ingest, /v1/batch), sent by @rocapine/rocalytics-sdk/analytics. The ingest answers {\"outcome\":\"accepted\"} (invalid events inside the batch are dropped one by one) or {\"outcome\":\"rejected\"} (the whole batch is unusable); any other answer is transient and the same batch is sent again, so event_id must be unique per event and stable across retries.",
+  "type": "object",
+  "required": ["app_id", "platform", "sent_at", "events"],
+  "properties": {
+    "app_id": { "type": "string", "description": "Bundle id / package name; must be on the ingest's allowlist" },
+    "platform": { "enum": ["ios", "android", "web"] },
+    "sent_at": { "type": "integer", "description": "Device time at send, ms since the epoch; the ingest corrects event times by its gap to the receive time when that exceeds 5 minutes" },
+    "sdk": { "type": "string", "maxLength": 64 },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "required": ["event_id", "name", "time"],
+        "properties": {
+          "event_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{8,64}$" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "time": { "type": "integer", "description": "Device time of the event, ms since the epoch" },
+          "roca_id": { "type": ["string", "null"], "maxLength": 128 },
+          "user_id": { "type": ["string", "null"], "maxLength": 128, "description": "The app's own account id (Amplitude setUserId)" },
+          "session_id": { "type": ["integer", "null"], "description": "Session start, ms since the epoch" },
+          "app_version": { "type": ["string", "null"], "maxLength": 64 },
+          "os_version": { "type": ["string", "null"], "maxLength": 64 },
+          "locale": { "type": ["string", "null"], "maxLength": 35 },
+          "properties": { "type": "object", "description": "At most 32 KB as JSON" },
+          "user_properties": { "type": "object", "description": "Set on $identify events; at most 32 KB as JSON" }
+        }
+      }
+    }
+  }
+}

@@ -35,8 +35,11 @@ check(require(path.join(root, "client")).RocalyticsClient === rocalytics.Rocalyt
 const paywall = require("@rocapine/rocalytics-sdk/paywall");
 check(typeof paywall.createPaywallTracker === "function", "@rocapine/rocalytics-sdk/paywall exports createPaywallTracker");
 check(require(path.join(root, "paywall")).createPaywallTracker === paywall.createPaywallTracker, "paywall/ stub folder resolves to the same module");
+const analytics = require("@rocapine/rocalytics-sdk/analytics");
+check(typeof analytics.createAnalytics === "function", "@rocapine/rocalytics-sdk/analytics exports createAnalytics");
+check(require(path.join(root, "analytics")).createAnalytics === analytics.createAnalytics, "analytics/ stub folder resolves to the same module");
 
-for (const sub of ["onboarding", "core", "client", "paywall"]) {
+for (const sub of ["onboarding", "core", "client", "paywall", "analytics"]) {
   check(fs.existsSync(path.join(root, "dist", sub, "index.d.ts")), `dist/${sub}/index.d.ts exists`);
 }
 
@@ -51,7 +54,7 @@ const resolveJs = (from, spec) => {
   throw new Error(`${path.relative(root, from)}: cannot resolve ${spec}`);
 };
 
-for (const sub of ["onboarding", "core", "paywall"]) {
+for (const sub of ["onboarding", "core", "paywall", "analytics"]) {
   const seen = new Set();
   const external = [];
   const stack = [path.join(root, "dist", sub, "index.js")];
