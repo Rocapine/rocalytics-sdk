@@ -107,6 +107,7 @@ export function createAnalytics(config: AnalyticsConfig): Analytics {
   let tickTimer: unknown = null;
   let disposed = false;
   let loaded = false;
+  let sessionTouched = false; // reset called before the stored state loaded
   let saveQueued = false;
   let userIdTouched = false; // setUserId or reset called before the stored state loaded
 
@@ -117,6 +118,14 @@ export function createAnalytics(config: AnalyticsConfig): Analytics {
     // events tracked while loading go after the stored ones and take the stored user id,
     // unless the app set or cleared it meanwhile
     if (!userIdTouched && stored.userId) for (const e of state.queue) if (e.user_id === null) e.user_id = stored.userId;
+    // and continue the stored session when the first of them is within its timeout: tracking
+    // before the load minted a new session (an app-open event usually is tracked then)
+    const minted = state.session;
+    const prev = stored.session;
+    if (!sessionTouched && minted && prev && minted.id - prev.last <= sessionTimeout) {
+      for (const e of state.queue) if (e.session_id === minted.id) e.session_id = prev.id;
+      state.session = { id: prev.id, last: minted.last };
+    }
     state = {
       queue: [...(stored.queue ?? []), ...state.queue].slice(-maxQueue),
       userId: userIdTouched ? state.userId : stored.userId ?? null,
@@ -307,7 +316,7 @@ export function createAnalytics(config: AnalyticsConfig): Analytics {
       safe(() => {
         state.userId = null;
         state.session = null;
-        if (!loaded) userIdTouched = true;
+        if (!loaded) userIdTouched = sessionTouched = true;
         persist();
       });
     },

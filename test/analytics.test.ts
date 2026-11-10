@@ -151,6 +151,36 @@ describe("analytics", () => {
     expect(sink.last!.events).toHaveLength(100);
   });
 
+  it("continues the stored session for events tracked before storage loads", async () => {
+    const storage = memoryStorage();
+    const first = setup({ storage, sink: { send: () => ({ outcome: "transient" }) } });
+    first.a.track("before_kill");
+    const session = first.time.clock.now();
+    await first.a.idle();
+    first.a.dispose();
+
+    await first.time.advance(36_000);
+    const { a, sink } = setup({ storage, clock: first.time.clock, timers: first.time.timers });
+    a.track("app_open"); // before the stored state has loaded
+    await a.flush();
+    expect(sink.last!.events.map((e) => e.session_id)).toEqual([session, session]);
+  });
+
+  it("starts a new session after a relaunch past the timeout", async () => {
+    const storage = memoryStorage();
+    const first = setup({ storage, sink: { send: () => ({ outcome: "transient" }) } });
+    first.a.track("before_kill");
+    const session = first.time.clock.now();
+    await first.a.idle();
+    first.a.dispose();
+
+    await first.time.advance(5 * 60_000 + 1);
+    const { a, sink } = setup({ storage, clock: first.time.clock, timers: first.time.timers });
+    a.track("app_open");
+    await a.flush();
+    expect(sink.last!.events.map((e) => e.session_id)).toEqual([session, first.time.clock.now()]);
+  });
+
   it("refuses bad names and never throws", () => {
     const diags: string[] = [];
     const { a } = setup({ onDiagnostic: (d) => diags.push(d.code), context: () => { throw new Error("boom"); } });
