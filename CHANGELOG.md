@@ -7,6 +7,8 @@ The format follows Keep a Changelog, and the project follows Semantic Versioning
 Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.0 is released, the entries before it may be truncated from this file.
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-11-10
 ### Added
 - `getRandomValues` option on `createAnalytics`, the onboarding run tracker and the paywall tracker (new type `GetRandomValues`, exported from `/core`): the random source for default ids, e.g. expo-crypto's `getRandomValues`. Hermes has no `crypto` global and importing expo-crypto does not add one, so React Native ids used `Math.random` (#10). A source that throws falls back to the old path. Ignored when `uuid` is given.
 ### Fixed
