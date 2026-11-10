@@ -440,6 +440,7 @@ That endpoint answers success with a 2xx and no body, so a 2xx is accepted. Othe
 import { createAnalytics } from "@rocapine/rocalytics-sdk/analytics";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { AppState, Platform } from "react-native";
+import { getRandomValues } from "expo-crypto";
 
 export const analytics = createAnalytics({
   appId: Application.applicationId!,           // must be on the ingest's allowlist
@@ -447,6 +448,7 @@ export const analytics = createAnalytics({
   rocaId: () => rocalytics.rocaId,              // events tracked before it resolves are kept
   context: { appVersion: Application.nativeApplicationVersion, osVersion: String(Platform.Version) },
   storage: AsyncStorage,                        // unsent events survive a kill
+  getRandomValues,                              // Hermes has no crypto global: else event ids use Math.random
 });
 AppState.addEventListener("change", (s) => s === "background" && analytics.flush());
 
@@ -461,6 +463,7 @@ analytics.reset();                              // logout
 - **Delivery:** at least once. A transient failure keeps the batch and retries with backoff (1 s, doubling, capped at 60 s) with the same `event_id`s, which the warehouse deduplicates on. `rejected` drops the batch (diagnostic `rejected`).
 - **Offline:** up to `maxQueue` (1,000) events are kept; beyond it the oldest are dropped (diagnostic `queue-full`).
 - **Sessions:** `session_id` is the session's start in ms, and a new session starts after 5 minutes without an event, as in Amplitude React Native. No `session_start` / `session_end` events are sent.
+- **Ids:** `event_id` is a UUIDv7 from `getRandomValues` when given, else `crypto.getRandomValues`, else `Math.random`. Hermes has no `crypto` global and importing expo-crypto does not add one, so pass its `getRandomValues`. The onboarding and paywall trackers take the same option.
 - **Never throws:** a bad name (empty or over 128 characters) is diagnostic `invalid-name`.
 
 ## Development

@@ -181,6 +181,21 @@ describe("analytics", () => {
     expect(sink.last!.events.map((e) => e.session_id)).toEqual([session, first.time.clock.now()]);
   });
 
+  it("mints event ids from an injected getRandomValues", async () => {
+    let calls = 0;
+    const { a, sink } = setup({
+      uuid: undefined,
+      getRandomValues: (bytes) => {
+        calls++;
+        return bytes.fill(0xab);
+      },
+    });
+    a.track("x");
+    await a.flush();
+    expect(calls).toBe(1);
+    expect(sink.last!.events[0].event_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-abababababab$/);
+  });
+
   it("refuses bad names and never throws", () => {
     const diags: string[] = [];
     const { a } = setup({ onDiagnostic: (d) => diags.push(d.code), context: () => { throw new Error("boom"); } });

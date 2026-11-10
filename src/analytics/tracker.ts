@@ -1,6 +1,6 @@
 import { safeDiagnostics, type DiagnosticHandler } from "../core/diagnostics";
 import { createHttpSink } from "../core/httpSink";
-import { createUuid } from "../core/ids";
+import { createUuid, type GetRandomValues } from "../core/ids";
 import { normalizeResult, type Sink, type SinkResult } from "../core/sink";
 import { createSerialStore, type KeyValueStorage } from "../core/storage";
 import { systemClock, systemTimers, type Clock, type Timers } from "../core/time";
@@ -45,6 +45,11 @@ export interface AnalyticsConfig {
   clock?: Clock;
   timers?: Timers;
   uuid?: () => string;
+  /**
+   * Random source for default ids, e.g. expo-crypto's `getRandomValues`. Without it, React Native
+   * (Hermes, no `crypto` global) falls back to `Math.random`. Ignored when `uuid` is given.
+   */
+  getRandomValues?: GetRandomValues;
   onDiagnostic?: DiagnosticHandler;
 }
 
@@ -86,7 +91,7 @@ const ATTEMPT_TIMEOUT_MS = 30_000;
 export function createAnalytics(config: AnalyticsConfig): Analytics {
   const clock = config.clock ?? systemClock;
   const timers = config.timers ?? systemTimers;
-  const uuid = config.uuid ?? createUuid(clock);
+  const uuid = config.uuid ?? createUuid(clock, config.getRandomValues);
   const report = safeDiagnostics(config.onDiagnostic);
   const sink: Sink<EventBatch> =
     config.sink ?? (createHttpSink({ url: config.endpoint ?? ROCALYTICS_INGEST_URL }) as Sink<EventBatch>);
