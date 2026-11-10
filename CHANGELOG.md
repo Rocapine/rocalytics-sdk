@@ -7,6 +7,8 @@ The format follows Keep a Changelog, and the project follows Semantic Versioning
 Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.0 is released, the entries before it may be truncated from this file.
 
 ## [Unreleased]
+### Fixed
+- `/analytics`: a relaunch within `sessionTimeoutMs` continues the stored session. Events tracked before storage had loaded (an app-open event, typically) started a new session on every cold start; they now take the stored `session_id` when the first of them is within the timeout. A `reset()` before the load still starts a new one.
 
 ## [0.9.0] - 2026-11-10
 ### Added
