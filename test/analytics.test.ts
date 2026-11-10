@@ -136,6 +136,21 @@ describe("analytics", () => {
     expect(events[1].user_id).toBe("u1");
   });
 
+  it("coalesces storage writes: a burst of tracks is not one full-queue write each", async () => {
+    const inner = memoryStorage();
+    let writes = 0;
+    const storage = { ...inner, setItem: (k: string, v: string) => (writes++, inner.setItem(k, v)) };
+    const { a } = setup({ storage, sink: { send: () => ({ outcome: "transient" }) } });
+    for (let i = 0; i < 100; i++) a.track(`e${i}`);
+    await a.idle();
+    expect(writes).toBeLessThanOrEqual(2);
+    a.dispose();
+
+    const { a: b, sink } = setup({ storage });
+    await b.flush();
+    expect(sink.last!.events).toHaveLength(100);
+  });
+
   it("refuses bad names and never throws", () => {
     const diags: string[] = [];
     const { a } = setup({ onDiagnostic: (d) => diags.push(d.code), context: () => { throw new Error("boom"); } });

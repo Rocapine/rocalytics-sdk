@@ -107,6 +107,7 @@ export function createAnalytics(config: AnalyticsConfig): Analytics {
   let tickTimer: unknown = null;
   let disposed = false;
   let loaded = false;
+  let saveQueued = false;
   let userIdTouched = false; // setUserId or reset called before the stored state loaded
 
   const ready: Promise<void> = (async () => {
@@ -128,7 +129,16 @@ export function createAnalytics(config: AnalyticsConfig): Analytics {
     });
 
   const persist = () => {
-    if (store) store.saveWith(() => ready.then(() => state));
+    // one queued write at a time: it serializes the state as of when it runs, so calls made
+    // before then are covered by it and calls made after queue the next one
+    if (!store || saveQueued) return;
+    saveQueued = true;
+    void store.saveWith(() =>
+      ready.then(() => {
+        saveQueued = false;
+        return state;
+      }),
+    );
   };
 
   const readContext = (): AnalyticsContext => {
