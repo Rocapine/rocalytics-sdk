@@ -70,6 +70,35 @@ describe("uuidv7", () => {
       vi.stubGlobal("crypto", original);
     }
   });
+
+  it("createUuid uses an injected getRandomValues and never Math.random", () => {
+    const original = globalThis.crypto;
+    vi.stubGlobal("crypto", undefined);
+    const spy = vi.spyOn(Math, "random");
+    let calls = 0;
+    try {
+      const mint = createUuid({ now: () => 1 }, (bytes) => {
+        calls++;
+        for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 37 + calls) & 0xff;
+        return bytes;
+      });
+      const ids = new Set(Array.from({ length: 10 }, mint));
+      expect(ids.size).toBe(10);
+      for (const id of ids) expect(id).toMatch(UUID);
+      expect(calls).toBe(10);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+      vi.stubGlobal("crypto", original);
+    }
+  });
+
+  it("createUuid falls back when the injected source throws", () => {
+    const mint = createUuid({ now: () => 1 }, () => {
+      throw new Error("no native module");
+    });
+    expect(mint()).toMatch(UUID);
+  });
 });
 
 describe("createSerialStore", () => {

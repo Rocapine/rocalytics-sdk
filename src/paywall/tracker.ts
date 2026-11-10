@@ -1,7 +1,7 @@
 import { captureRunContext, type RunContextInput } from "../core/context";
 import { createDelivery, type Delivery, type Outbound, type RetryPolicy } from "../core/delivery";
 import { safeDiagnostics, type DiagnosticHandler } from "../core/diagnostics";
-import { createUuid } from "../core/ids";
+import { createUuid, type GetRandomValues } from "../core/ids";
 import type { Sink } from "../core/sink";
 import { createSerialStore, type KeyValueStorage, type SerialStore } from "../core/storage";
 import { systemClock, systemTimers, type Clock, type Timers } from "../core/time";
@@ -25,6 +25,11 @@ export interface PaywallTrackerConfig {
   timers?: Timers;
   /** Presentation id minter. Must return a lowercase UUID. Default: UUIDv7. */
   uuid?: () => string;
+  /**
+   * Random source for default ids, e.g. expo-crypto's `getRandomValues`. Without it, React Native
+   * (Hermes, no `crypto` global) falls back to `Math.random`. Ignored when `uuid` is given.
+   */
+  getRandomValues?: GetRandomValues;
   retry?: RetryPolicy;
   attemptTimeoutMs?: number;
   onDiagnostic?: DiagnosticHandler;
@@ -45,7 +50,7 @@ export function createPaywallTracker(config: PaywallTrackerConfig): PaywallTrack
   const report = safeDiagnostics(config.onDiagnostic);
   const clock = config.clock ?? systemClock;
   const timers = config.timers ?? systemTimers;
-  const uuid = config.uuid ?? createUuid(clock);
+  const uuid = config.uuid ?? createUuid(clock, config.getRandomValues);
   const store: SerialStore<Stored> | null = config.storage
     ? createSerialStore<Stored>(config.storage, config.storageKey ?? DEFAULT_PAYWALL_STORAGE_KEY, (e) =>
         report({ code: "storage", message: String(e) }),

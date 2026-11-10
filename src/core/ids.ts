@@ -24,13 +24,26 @@ export function uuidv7(nowMs: number, random: Uint8Array): string {
   return `${hex(b, 0, 4)}-${hex(b, 4, 6)}-${hex(b, 6, 8)}-${hex(b, 8, 10)}-${hex(b, 10, 16)}`;
 }
 
+/** Fills `bytes` with random values, like `crypto.getRandomValues` (expo-crypto's `getRandomValues` fits). */
+export type GetRandomValues = (bytes: Uint8Array) => unknown;
+
 /**
- * 16 random bytes from `crypto.getRandomValues` when the runtime has it, and
- * from `Math.random` otherwise. A run id needs to be unique, not secret, so
- * the fallback is acceptable on a runtime with no crypto global.
+ * 16 random bytes: from `getRandomValues` when given, else from the runtime's
+ * `crypto.getRandomValues`, else from `Math.random`. Hermes has no `crypto`
+ * global (and importing expo-crypto does not add one), so on React Native pass
+ * expo-crypto's `getRandomValues` to avoid the `Math.random` fallback. A source
+ * that throws falls through to the next one.
  */
-export function randomBytes16(): Uint8Array {
+export function randomBytes16(getRandomValues?: GetRandomValues): Uint8Array {
   const out = new Uint8Array(16);
+  if (getRandomValues) {
+    try {
+      getRandomValues(out);
+      return out;
+    } catch {
+      // fall through
+    }
+  }
   const c = (globalThis as { crypto?: { getRandomValues?: (a: Uint8Array) => Uint8Array } }).crypto;
   if (c && typeof c.getRandomValues === "function") {
     c.getRandomValues(out);
@@ -40,7 +53,7 @@ export function randomBytes16(): Uint8Array {
   return out;
 }
 
-/** The default id minter: UUIDv7 from the injected clock. */
-export function createUuid(clock: Clock): () => string {
-  return () => uuidv7(clock.now(), randomBytes16());
+/** The default id minter: UUIDv7 from the injected clock and random source. */
+export function createUuid(clock: Clock, getRandomValues?: GetRandomValues): () => string {
+  return () => uuidv7(clock.now(), randomBytes16(getRandomValues));
 }

@@ -1,7 +1,7 @@
 import { captureRunContext, type RunContextInput } from "../core/context";
 import { createDelivery, type Delivery, type Outbound, type RetryPolicy } from "../core/delivery";
 import { consoleDiagnostics, safeDiagnostics, type DiagnosticHandler } from "../core/diagnostics";
-import { createUuid } from "../core/ids";
+import { createUuid, type GetRandomValues } from "../core/ids";
 import type { Sink } from "../core/sink";
 import { createSerialStore, type KeyValueStorage, type SerialStore } from "../core/storage";
 import { hasBadText, wellFormedText } from "../core/text";
@@ -41,6 +41,11 @@ export interface TrackerConfig {
   timers?: Timers;
   /** Run id minter. Must return a lowercase UUID. Default: UUIDv7. */
   uuid?: () => string;
+  /**
+   * Random source for default ids, e.g. expo-crypto's `getRandomValues`. Without it, React Native
+   * (Hermes, no `crypto` global) falls back to `Math.random`. Ignored when `uuid` is given.
+   */
+  getRandomValues?: GetRandomValues;
   /**
    * Changes within this window go out as one send. Default 500 ms. Completion
    * and background skip the debounce, but with `storage` every send, these
@@ -219,7 +224,7 @@ export function createOnboardingRunTracker(config: TrackerConfig): OnboardingRun
   const clock = config.clock ?? systemClock;
   const timers = config.timers ?? systemTimers;
   const report = safeDiagnostics(config.onDiagnostic);
-  const fallbackUuid = createUuid(clock);
+  const fallbackUuid = createUuid(clock, config.getRandomValues);
   const debounceMs = config.debounceMs ?? 500;
   // Set only when the stored value was READ and found unparseable or malformed,
   // so it is rewritten without the bad part. A failed read never sets it.

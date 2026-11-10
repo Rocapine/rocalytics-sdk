@@ -10,7 +10,7 @@ export { createDelivery } from "./delivery";
 export type { Delivery, DeliveryOptions, Outbound, RetryPolicy } from "./delivery";
 export { createHttpSink } from "./httpSink";
 export type { HttpSinkOptions } from "./httpSink";
-export { createUuid, randomBytes16, uuidv7 } from "./ids";
+export { createUuid, randomBytes16, uuidv7, type GetRandomValues } from "./ids";
 export { normalizeResult } from "./sink";
 export type { Sink, SinkOutcome, SinkResult } from "./sink";
 export { createSerialStore, memoryStorage } from "./storage";
