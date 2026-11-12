@@ -38,6 +38,10 @@ describe("publish workflow (npm trusted publishing)", () => {
     expect(yml).toContain("event_type=sdk-released");
   });
 
+  it("gives the notify job no inherited permissions (it only uses the App token it mints)", () => {
+    expect(yml).toMatch(/^ {2}notify-roca-chandler:\n {4}needs: publish\n {4}permissions: \{\}$/m);
+  });
+
   it("uses an npm new enough for trusted publishing (>= 11.5.1)", () => {
     expect(yml).toMatch(/npm install -g npm@\^11\.5\.1/);
   });

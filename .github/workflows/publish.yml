@@ -56,6 +56,7 @@ jobs:
   # POST /repos/{owner}/{repo}/dispatches requires.
   notify-roca-chandler:
     needs: publish
+    permissions: {}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v2
