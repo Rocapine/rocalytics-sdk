@@ -49,3 +49,28 @@ jobs:
           version=$(node -p "require('./package.json').version")
           case "$version" in *-*) tag=next ;; *) tag=latest ;; esac
           npm publish --tag "$tag"
+
+  # Tells roca-chandler (the bot that upgrades consumer apps) about the new
+  # version. Separate from `publish` so that job stays exactly what npm trusts.
+  # The roca-chandler App token has contents: write there, which
+  # POST /repos/{owner}/{repo}/dispatches requires.
+  notify-roca-chandler:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.ROCA_CHANDLER_APP_ID }}
+          private-key: ${{ secrets.ROCA_CHANDLER_PRIVATE_KEY }}
+          owner: Rocapine
+          repositories: roca-chandler
+
+      - name: Dispatch sdk-released to roca-chandler
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh api repos/Rocapine/roca-chandler/dispatches \
+            -f event_type=sdk-released \
+            -F 'client_payload[sdk]=rocalytics-sdk' \
+            -F "client_payload[version]=${GITHUB_REF_NAME#v}"

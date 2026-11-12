@@ -9,6 +9,8 @@ const WORKFLOW = path.join(ROOT, ".github", "workflows", "publish.yml");
 // filename, so renaming the file silently breaks publishing.
 describe("publish workflow (npm trusted publishing)", () => {
   const yml = fs.existsSync(WORKFLOW) ? fs.readFileSync(WORKFLOW, "utf8") : "";
+  // The publish job, up to the next job; the notify job after it may use secrets.
+  const publishJob = yml.split(/^ {2}publish:$/m)[1]?.split(/^ {2}\S/m)[0] ?? "";
 
   it("exists at .github/workflows/publish.yml", () => {
     expect(fs.existsSync(WORKFLOW)).toBe(true);
@@ -21,7 +23,19 @@ describe("publish workflow (npm trusted publishing)", () => {
 
   it("gets an OIDC token and holds no npm token", () => {
     expect(yml).toMatch(/id-token:\s*write/);
-    expect(yml).not.toMatch(/NODE_AUTH_TOKEN|NPM_TOKEN|_authToken|secrets\./);
+    expect(yml).not.toMatch(/NODE_AUTH_TOKEN|NPM_TOKEN|_authToken/);
+    expect(publishJob).toMatch(/npm publish/);
+    expect(publishJob).not.toMatch(/secrets\./);
+  });
+
+  it("publishes from the `npm` environment, which npm trusts", () => {
+    expect(publishJob).toMatch(/^ {4}environment: npm$/m);
+  });
+
+  it("tells roca-chandler about the release only after it is published", () => {
+    expect(yml).toMatch(/^ {2}notify-roca-chandler:\n {4}needs: publish$/m);
+    expect(yml).toContain("repos/Rocapine/roca-chandler/dispatches");
+    expect(yml).toContain("event_type=sdk-released");
   });
 
   it("uses an npm new enough for trusted publishing (>= 11.5.1)", () => {
