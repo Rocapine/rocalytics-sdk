@@ -1,13 +1,17 @@
 name: Release
 
-# Merging a `chore(release): <version>` commit (made with
-# `node scripts/release.mjs <version>`) to main tags v<version> and creates the
-# GitHub Release, whose body is that version's CHANGELOG section. The Release is
-# created with the roca-chandler App token, not GITHUB_TOKEN: a Release created
-# with GITHUB_TOKEN does not trigger other workflows, and publish.yml must run.
+# A push to main that changes package.json (a release commit made with
+# `node scripts/release.mjs <version>`, however it is merged: squash, rebase or
+# merge commit) tags v<version> and creates the GitHub Release, whose body is
+# that version's CHANGELOG section. The only gate is that tag v<version> does
+# not exist yet, so other package.json changes and reruns are no-ops. The
+# Release is created with the roca-chandler App token, not GITHUB_TOKEN: a
+# Release created with GITHUB_TOKEN does not trigger other workflows, and
+# publish.yml must run.
 on:
   push:
     branches: [main]
+    paths: [package.json]
 
 permissions:
   contents: read
@@ -18,7 +22,6 @@ concurrency:
 
 jobs:
   release:
-    if: "startsWith(github.event.head_commit.message, 'chore(release): ')"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,12 +35,16 @@ jobs:
         run: |
           version=$(node -p "require('./package.json').version")
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
-            echo "Tag v$version already exists; nothing to release."
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          # Fails closed: only status 2 (no matching ref) means the tag is absent.
+          status=0
+          git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null || status=$?
+          case "$status" in
+            0) echo "Tag v$version already exists; nothing to release."
+               echo "exists=true" >> "$GITHUB_OUTPUT" ;;
+            2) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::git ls-remote failed (status $status); cannot tell whether v$version exists"
+               exit 1 ;;
+          esac
 
       - name: Release notes from CHANGELOG.md
         if: steps.version.outputs.exists == 'false'
