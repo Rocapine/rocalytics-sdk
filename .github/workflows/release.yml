@@ -1,0 +1,73 @@
+name: Release
+
+# A push to main that changes package.json (a release commit made with
+# `node scripts/release.mjs <version>`, however it is merged: squash, rebase or
+# merge commit) tags v<version> and creates the GitHub Release, whose body is
+# that version's CHANGELOG section. The only gate is that tag v<version> does
+# not exist yet, so other package.json changes and reruns are no-ops. The
+# Release is created with the roca-chandler App token, not GITHUB_TOKEN: a
+# Release created with GITHUB_TOKEN does not trigger other workflows, and
+# publish.yml must run.
+on:
+  push:
+    branches: [main]
+    paths: [package.json]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Version and tag
+        id: version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # Fails closed: only status 2 (no matching ref) means the tag is absent.
+          status=0
+          git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null || status=$?
+          case "$status" in
+            0) echo "Tag v$version already exists; nothing to release."
+               echo "exists=true" >> "$GITHUB_OUTPUT" ;;
+            2) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::git ls-remote failed (status $status); cannot tell whether v$version exists"
+               exit 1 ;;
+          esac
+
+      - name: Release notes from CHANGELOG.md
+        if: steps.version.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: node scripts/changelog-section.mjs "$VERSION" > "$RUNNER_TEMP/notes.md"
+
+      - uses: actions/create-github-app-token@v2
+        if: steps.version.outputs.exists == 'false'
+        id: app-token
+        with:
+          app-id: ${{ secrets.ROCA_CHANDLER_APP_ID }}
+          private-key: ${{ secrets.ROCA_CHANDLER_PRIVATE_KEY }}
+          owner: Rocapine
+          repositories: rocalytics-sdk
+
+      - name: Tag and create the GitHub Release
+        if: steps.version.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          prerelease=()
+          case "$VERSION" in *-*) prerelease=(--prerelease) ;; esac
+          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "v$VERSION" --notes-file "$RUNNER_TEMP/notes.md" "${prerelease[@]}"
