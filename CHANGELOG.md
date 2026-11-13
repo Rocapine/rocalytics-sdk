@@ -7,6 +7,8 @@ The format follows Keep a Changelog, and the project follows Semantic Versioning
 Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.0 is released, the entries before it may be truncated from this file.
 
 ## [Unreleased]
+### Added
+- `@rocapine/rocalytics-sdk/client`: `RocalyticsClient.adoptRocaId(id)` switches the device to a rocaId created elsewhere (a web purchase being redeemed), so web and app are one user. The id must be a UUID (any case, stored and sent as given). It is stored under both roca id keys before the client switches to it, so every later call (`track`, `trackPurchase`, `trackOnboarding`, onboarding runs, paywall presentations) and every later launch use it; then the device is identified under it with the start-up identifiers. The current id is a no-op. An invalid id is ignored and reported as `invalid-roca-id`; an id that cannot be stored is not adopted, the current one is kept, and `identity-adopt-failed` is reported. Rejects only if that identify fails, with the id already adopted. `identifyOnStart: false` sends no identify: call `identify()` after it. Events already sent stay under the previous id.
 
 ## [0.10.0] - 2026-11-10
 ### Added
