@@ -223,6 +223,145 @@ describe("identifyOnStart", () => {
   });
 });
 
+describe("adoptRocaId", () => {
+  const returning = () => new FakeSecureStore({ [KEY]: ROCA_ID, "rocadata-install-tracked": "true" });
+
+  it("adopts the id: writes it under both keys, switches rocaId, and identifies the device under it", async () => {
+    const store = returning();
+    const { client, http, diagnostics } = start(store);
+    await client.ready;
+    await client.adoptRocaId(OTHER_ID);
+    expect(store.writes).toEqual([
+      [KEY, OTHER_ID],
+      [LEGACY_KEY, OTHER_ID],
+    ]);
+    expect(client.rocaId).toBe(OTHER_ID);
+    const last = http.requests[http.requests.length - 1];
+    expect(new URL(last.url).pathname).toBe("/functions/v1/identify");
+    expect(last.headers["X-Roca-ID"]).toBe(OTHER_ID);
+    expect(last.body).toEqual({ idfv: IOS.idfv, locale: IOS.locale });
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("later calls carry the adopted id", async () => {
+    const { client, http } = start(returning());
+    await client.adoptRocaId(OTHER_ID);
+    const before = http.requests.length;
+    await client.track("purchase");
+    await client.trackPurchase({ isTrial: false, value: 1, currency: "EUR", originalTransactionIdentifier: "t-9", productId: "p" });
+    await client.trackOnboarding("welcome");
+    await client.trackCustomEvent("x");
+    const later = http.requests.slice(before);
+    expect(later).toHaveLength(4);
+    expect(later.every((r) => r.headers["X-Roca-ID"] === OTHER_ID)).toBe(true);
+    expect((later[1].body as { deduplication_id: string }).deduplication_id).toBe(`${OTHER_ID}-purchase-t-9`);
+  });
+
+  it("survives a restart", async () => {
+    const store = returning();
+    await start(store).client.adoptRocaId(OTHER_ID);
+    const { client, http } = start(store);
+    await client.ready;
+    expect(client.rocaId).toBe(OTHER_ID);
+    expect(http.paths()).toEqual(["/functions/v1/identify"]);
+    expect(http.requests.every((r) => r.headers["X-Roca-ID"] === OTHER_ID)).toBe(true);
+  });
+
+  it("the current id is a no-op", async () => {
+    const store = returning();
+    const { client, http, diagnostics } = start(store);
+    await client.ready;
+    const before = http.requests.length;
+    await client.adoptRocaId(ROCA_ID);
+    expect(store.writes).toEqual([]);
+    expect(http.requests).toHaveLength(before);
+    expect(diagnostics).toEqual([]);
+  });
+
+  it.each(["", "not-a-uuid", ` ${OTHER_ID}`, `${OTHER_ID}x`, `{${OTHER_ID}}`, OTHER_ID.replace(/-/g, ""), 123 as unknown as string])(
+    "ignores the invalid id %j, keeps the current one, and reports it without echoing it",
+    async (input) => {
+      const store = returning();
+      const { client, http, diagnostics } = start(store);
+      await client.ready;
+      const before = http.requests.length;
+      await client.adoptRocaId(input);
+      expect(client.rocaId).toBe(ROCA_ID);
+      expect(store.writes).toEqual([]);
+      expect(http.requests).toHaveLength(before);
+      expect(diagnostics.map((d) => d.code)).toEqual(["invalid-roca-id"]);
+      if (input) expect(diagnostics[0].message).not.toContain(String(input).trim());
+    },
+  );
+
+  it("accepts an upper-case UUID and keeps it as given", async () => {
+    const upper = OTHER_ID.toUpperCase();
+    const store = returning();
+    const { client, http } = start(store);
+    await client.adoptRocaId(upper);
+    expect(client.rocaId).toBe(upper);
+    expect(store.map.get(KEY)).toBe(upper);
+    expect(http.requests[http.requests.length - 1].headers["X-Roca-ID"]).toBe(upper);
+  });
+
+  it("a failed write keeps the current id", async () => {
+    const store = returning();
+    store.failWrites.add(KEY);
+    const { client, http, diagnostics } = start(store);
+    await client.ready;
+    const before = http.requests.length;
+    await client.adoptRocaId(OTHER_ID);
+    expect(client.rocaId).toBe(ROCA_ID);
+    expect(http.requests).toHaveLength(before);
+    expect(diagnostics.map((d) => d.code)).toEqual(["identity-adopt-failed"]);
+    expect(store.map.get(KEY)).toBe(ROCA_ID);
+  });
+
+  it("a failed legacy write still adopts", async () => {
+    const store = returning();
+    store.failWrites.add(LEGACY_KEY);
+    const { client, diagnostics } = start(store);
+    await client.adoptRocaId(OTHER_ID);
+    expect(client.rocaId).toBe(OTHER_ID);
+    expect(store.map.get(KEY)).toBe(OTHER_ID);
+    expect(diagnostics.map((d) => d.code)).toEqual(["identity-legacy-write-failed"]);
+  });
+
+  it("identifyOnStart: false sends no identify", async () => {
+    const store = returning();
+    const { client, http } = start(store, IOS, { identifyOnStart: false });
+    await client.adoptRocaId(OTHER_ID);
+    expect(client.rocaId).toBe(OTHER_ID);
+    expect(store.map.get(KEY)).toBe(OTHER_ID);
+    expect(http.requests).toEqual([]);
+  });
+
+  it("a failed identify rejects but the id stays adopted", async () => {
+    const store = returning();
+    const http = recordingFetch({ "/functions/v1/identify": { status: 503 } });
+    const client = new RocalyticsClient({ modules: fakeModules(IOS, store), fetch: http.fetch, onDiagnostic: () => {}, installPing: false });
+    await client.ready;
+    await expect(client.adoptRocaId(OTHER_ID)).rejects.toThrow("[ROCALYTICS] identify failed: 503");
+    expect(client.rocaId).toBe(OTHER_ID);
+    expect(store.map.get(KEY)).toBe(OTHER_ID);
+  });
+
+  it("called before ready, it waits", async () => {
+    const { client } = start(returning());
+    expect(client.rocaId).toBeNull();
+    await expect(client.adoptRocaId(OTHER_ID)).resolves.toBeUndefined();
+    expect(client.rocaId).toBe(OTHER_ID);
+  });
+
+  it("two concurrent adoptions end with memory equal to storage", async () => {
+    const store = returning();
+    const { client } = start(store);
+    await Promise.all([client.adoptRocaId(OTHER_ID), client.adoptRocaId(OTHER_ID.toUpperCase())]);
+    expect(client.rocaId).toBe(store.map.get(KEY));
+    expect(client.rocaId).not.toBe(ROCA_ID);
+  });
+});
+
 describe("an inert client", () => {
   it("with no native modules: ready resolves, every method resolves without a request, and the cause is reported", async () => {
     const http = recordingFetch();
@@ -236,6 +375,7 @@ describe("an inert client", () => {
     await client.trackCustomEvent("x");
     await client.trackOnboarding("welcome");
     await client.trackPurchase({ isTrial: false, value: 1, currency: "EUR", originalTransactionIdentifier: "t", productId: "p" });
+    await client.adoptRocaId(OTHER_ID);
     await expect(client.getDemandScore()).rejects.toThrow("[ROCALYTICS] demand-score unavailable: client failed to initialize");
     expect(http.requests).toEqual([]);
     expect(diagnostics.map((d) => d.code)).toEqual(["native-modules-unavailable"]);
