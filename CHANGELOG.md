@@ -8,6 +8,10 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-13
+### Added
+- `@rocapine/rocalytics-sdk/client`: `RocalyticsClient.adoptRocaId(id)` switches the device to a rocaId created elsewhere (a web purchase being redeemed), so web and app are one user. The id must be a UUID (any case, stored and sent as given). It is stored under both roca id keys before the client switches to it, so every later call (`track`, `trackPurchase`, `trackOnboarding`, onboarding runs, paywall presentations) and every later launch use it; then the device is identified under it with the start-up identifiers. The current id is a no-op. An invalid id is ignored and reported as `invalid-roca-id`; an id that cannot be stored is not adopted, the current one is kept, and `identity-adopt-failed` is reported. Rejects only if that identify fails, with the id already adopted. `identifyOnStart: false` sends no identify: call `identify()` after it. Events already sent stay under the previous id.
+
 ## [0.10.0] - 2026-11-10
 ### Added
 - `getRandomValues` option on `createAnalytics`, the onboarding run tracker and the paywall tracker (new type `GetRandomValues`, exported from `/core`): the random source for default ids, e.g. expo-crypto's `getRandomValues`. Hermes has no `crypto` global and importing expo-crypto does not add one, so React Native ids used `Math.random` (#10). A source that throws falls back to the old path. Ignored when `uuid` is given.
