@@ -13,7 +13,7 @@ import {
 import { accept, assertConformant, SIZE_LIMIT, sizeOf } from "./contract";
 import { ManualTime } from "./fakes";
 import { CONTEXT } from "./harness";
-import { FakeSecureStore, IOS, ROCA_ID, fakeModules, stubIntl } from "./client.fakes";
+import { FakeSecureStore, IOS, ROCA_ID, fakeModules, recordingFetch, stubIntl } from "./client.fakes";
 
 // The run tracker's snapshots, delivered to Rocalytics. Each body is the v1
 // snapshot itself plus the pre-v1 keys (`responses`, `onboarding_metadata`),
@@ -433,6 +433,19 @@ describe("completion: the onboarding_completed event", () => {
     expect(ingest.events).toEqual([]);
     expect(await sink.send(COMPLETED)).toEqual({ outcome: "accepted" });
     expect(ingest.events.map((e) => e.name)).toEqual(["onboarding_completed"]);
+  });
+
+  it("after adoptRocaId, sendOnboardingRun and its onboarding_completed event carry the adopted id", async () => {
+    const OTHER = "0b6e5a2c-3d4f-4a1b-8c9d-0e1f2a3b4c5d";
+    const http = recordingFetch();
+    const client = clientFor(http.fetch);
+    await client.adoptRocaId(OTHER);
+    const before = http.requests.length;
+    expect(await client.sendOnboardingRun(COMPLETED)).toEqual({ outcome: "accepted" });
+    const posts = http.requests.slice(before);
+    expect(posts.map((r) => new URL(r.url).pathname)).toEqual(["/functions/v1/onboarding-response", "/functions/v1/track"]);
+    expect(posts.every((r) => r.headers["X-Roca-ID"] === OTHER)).toBe(true);
+    expect((posts[1].body as { deduplication_id: string }).deduplication_id).toBe(`${OTHER}-onboarding_completed-${COMPLETED.run_id}`);
   });
 
   it("does not fire for a completed snapshot the ingest explicitly rejects", async () => {
