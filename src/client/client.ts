@@ -47,6 +47,9 @@ export const INSTALL_TRACKED_KEY = "rocadata-install-tracked";
 /** A second install key one copied client used. Holding it also counts as "install already sent". */
 export const LEGACY_INSTALL_TRACKED_KEYS = ["rocadata-install-tracked-4"];
 
+// What adoptRocaId accepts. Case-insensitive: the id comes from outside the SDK.
+const ROCA_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface RocalyticsClientOptions {
   /**
    * The native modules. By default the Expo modules and react-native are
@@ -213,6 +216,45 @@ export class RocalyticsClient {
   }
 
   /**
+   * Switches the device to a roca id created elsewhere (a web purchase being
+   * redeemed), so web and app are one user. Waits for `ready`. The id must be
+   * a UUID (any case, kept as given); an invalid one is ignored and reported
+   * (`invalid-roca-id`), and the current id is a no-op. The id is stored under
+   * both roca id keys before the client switches to it, so every later call
+   * and every later launch uses it; when it cannot be stored the current id is
+   * kept and `identity-adopt-failed` reported. Then the device is identified
+   * under it as at start-up, unless `identifyOnStart` is `false` (the app then
+   * calls `identify()` itself). Rejects only if that identify fails, with the
+   * id already adopted. Events already sent stay under the previous id; await
+   * it before calls that must carry the new one.
+   */
+  async adoptRocaId(id: string): Promise<void> {
+    await this.ready;
+    const native = this.native;
+    if (!this.rocaId || !native) return;
+    if (typeof id !== "string" || !ROCA_ID_PATTERN.test(id)) {
+      this.report({ code: "invalid-roca-id", message: "adoptRocaId was given a value that is not a UUID, so the roca id was not changed" });
+      return;
+    }
+    if (id === this.rocaId) return;
+    const store = native.secureStore;
+    try {
+      await store.setItemAsync(ROCA_ID_KEY, id);
+    } catch (error) {
+      this.report({ code: "identity-adopt-failed", message: `the roca id could not be stored under ${ROCA_ID_KEY}, so the current one was kept: ${message(error)}` });
+      return;
+    }
+    // Under the legacy key too, for the reason readOrMintRocaId gives.
+    try {
+      await store.setItemAsync(LEGACY_ROCA_ID_KEY, id);
+    } catch (error) {
+      this.report({ code: "identity-legacy-write-failed", message: `the roca id was not also written to ${LEGACY_ROCA_ID_KEY}: ${message(error)}` });
+    }
+    this.rocaId = id;
+    if (this.options.identifyOnStart !== false) await this.sendIdentify(await this.deviceIdentifiers(native));
+  }
+
+  /**
    * Call on every onboarding navigation change: entering a step, answering on
    * it, or moving on. Sends every step seen so far; the API keeps the latest
    * snapshot per roca id, so calls need no batching or debouncing.
@@ -300,11 +342,7 @@ export class RocalyticsClient {
     }
     this.native = native;
     try {
-      if (this.options.identifyOnStart !== false) {
-        const idfv = native.platform.OS === "ios" ? await native.application.getIosIdForVendorAsync() : null;
-        const androidId = native.platform.OS === "android" ? native.application.getAndroidId() : null;
-        await this.sendIdentify({ idfv, android_id: androidId, locale: intlOptions().locale });
-      }
+      if (this.options.identifyOnStart !== false) await this.sendIdentify(await this.deviceIdentifiers(native));
 
       this.deviceContext = await this.readDeviceContext(native);
 
@@ -363,6 +401,13 @@ export class RocalyticsClient {
       this.report({ code: "identity-legacy-write-failed", message: `the roca id was not also written to ${LEGACY_ROCA_ID_KEY}: ${message(error)}` });
     }
     return id;
+  }
+
+  /** What start-up identifies the device with. */
+  private async deviceIdentifiers(native: RocalyticsModules): Promise<IdentifyParams> {
+    const idfv = native.platform.OS === "ios" ? await native.application.getIosIdForVendorAsync() : null;
+    const androidId = native.platform.OS === "android" ? native.application.getAndroidId() : null;
+    return { idfv, android_id: androidId, locale: intlOptions().locale };
   }
 
   private async readDeviceContext(native: RocalyticsModules): Promise<DeviceContext> {

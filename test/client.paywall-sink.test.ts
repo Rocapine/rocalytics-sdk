@@ -40,6 +40,23 @@ describe("Rocalytics paywall sink", () => {
     }
   });
 
+  it("after adoptRocaId, presentations carry the adopted id", async () => {
+    const OTHER = "0b6e5a2c-3d4f-4a1b-8c9d-0e1f2a3b4c5d";
+    const rec = recordingFetch({ [PATH]: { status: 200, json: { outcome: "accepted" } } });
+    const store = new FakeSecureStore({ "rocalytics-roca-id": ROCA_ID, "rocadata-install-tracked": "true" });
+    const client = new RocalyticsClient({ modules: fakeModules(IOS, store), fetch: rec.fetch });
+    await client.adoptRocaId(OTHER);
+    const time = new ManualTime();
+    const tracker = createPaywallTracker({ sink: createRocalyticsPaywallSink(client), context: CONTEXT, clock: time.clock, timers: time.timers });
+    const h = tracker.start(INFO)!;
+    await time.advance(0);
+    h.shown();
+    await time.advance(1_000);
+    const posts = rec.requests.filter((r) => new URL(r.url).pathname === PATH);
+    expect(posts.length).toBeGreaterThan(0);
+    for (const p of posts) expect(p.headers["X-Roca-ID"]).toBe(OTHER);
+  });
+
   it("maps answers per D27: a body outcome wins, anything else is transient", () => {
     expect(paywallIngestOutcome(200, { outcome: "accepted" })).toEqual({ outcome: "accepted" });
     expect(paywallIngestOutcome(200, { outcome: "ignored" })).toEqual({ outcome: "ignored" });
