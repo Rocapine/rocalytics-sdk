@@ -127,9 +127,19 @@ export interface AttestManagerOptions {
   onDiagnostic?: DiagnosticHandler;
 }
 
+/** A token and what it is bound to: the API checks these against the request's app id, platform and roca id. */
+export interface AttestBinding {
+  token: string;
+  app_id: string;
+  platform: AttestPlatform;
+  roca_id: string;
+}
+
 export interface AttestTokenManager {
   /** A token valid for the current app, platform and roca id, or null. Resolves within `waitMs` (default 3000). Never throws. */
   getToken(waitMs?: number): Promise<string | null>;
+  /** `getToken`, with the app id, platform and roca id the token is bound to. */
+  getBinding(waitMs?: number): Promise<AttestBinding | null>;
   state(): AttestState;
 }
 
@@ -365,14 +375,16 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
 
   const inBackoff = () => backoffUntil !== null && clock.now() < backoffUntil;
 
-  const obtain = async (): Promise<string | null> => {
+  const bound = (token: string, rocaId: string): AttestBinding => ({ token, app_id: appId, platform, roca_id: rocaId });
+
+  const obtain = async (): Promise<AttestBinding | null> => {
     await load();
     const rocaId = options.getRocaId();
     if (rocaId === null || terminal) return null;
     const cached = usable(rocaId);
     if (cached) {
       if (cached.local_expires_at - clock.now() <= RENEW_BEFORE_MS && !flight && !inBackoff()) startFlight(rocaId, true);
-      return cached.token;
+      return bound(cached.token, cached.roca_id);
     }
     if (flight && flight.rocaId !== rocaId) {
       // A flight for another roca id: its token is not ours. Wait for it, then decide again.
@@ -382,32 +394,34 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
     const f = flight ?? (inBackoff() ? null : startFlight(rocaId, false));
     if (!f) return null;
     const token = await f.promise;
-    return token !== null && options.getRocaId() === f.rocaId ? token : null;
+    return token !== null && options.getRocaId() === f.rocaId ? bound(token, f.rocaId) : null;
   };
 
-  return {
-    getToken(waitMs = DEFAULT_WAIT_MS) {
-      return new Promise<string | null>((resolve) => {
-        let settled = false;
-        let handle: unknown;
-        const finish = (value: string | null) => {
-          if (settled) return;
-          settled = true;
-          try {
-            timers.clearTimeout(handle);
-          } catch {
-            // nothing to clear
-          }
-          resolve(value);
-        };
+  const getBinding = (waitMs = DEFAULT_WAIT_MS): Promise<AttestBinding | null> =>
+    new Promise<AttestBinding | null>((resolve) => {
+      let settled = false;
+      let handle: unknown;
+      const finish = (value: AttestBinding | null) => {
+        if (settled) return;
+        settled = true;
         try {
-          handle = timers.setTimeout(() => finish(null), waitMs);
-          obtain().then(finish, () => finish(null));
+          timers.clearTimeout(handle);
         } catch {
-          finish(null);
+          // nothing to clear
         }
-      });
-    },
+        resolve(value);
+      };
+      try {
+        handle = timers.setTimeout(() => finish(null), waitMs);
+        obtain().then(finish, () => finish(null));
+      } catch {
+        finish(null);
+      }
+    });
+
+  return {
+    getBinding,
+    getToken: (waitMs?: number) => getBinding(waitMs).then((b) => b?.token ?? null),
     state() {
       if (terminal) return terminal;
       if (flight) return flight.renewing ? "renewing" : "fetching";

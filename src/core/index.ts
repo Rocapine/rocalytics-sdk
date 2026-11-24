@@ -19,4 +19,4 @@ export { codePointLength, utf8ByteLength } from "./text";
 export { systemClock, systemTimers, toTimestamp } from "./time";
 export type { Clock, Timers } from "./time";
 export { ATTEST_TOKEN_KEY, BACKOFF_MS, RENEW_BEFORE_MS, bindingString, createAttestTokenManager, readTokenLifetime } from "./attest";
-export type { AttestFetch, AttestManagerOptions, AttestPlatform, AttestProvider, AttestState, AttestTokenManager } from "./attest";
+export type { AttestBinding, AttestFetch, AttestManagerOptions, AttestPlatform, AttestProvider, AttestState, AttestTokenManager } from "./attest";

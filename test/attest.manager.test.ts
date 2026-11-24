@@ -284,6 +284,32 @@ describe("attest token manager", () => {
     expect(stored()).toMatchObject({ token: jwt(100), roca_id: "r2" });
   });
 
+  it("getBinding: the token with the app id, platform and roca id it is bound to, from a flight and from the cache", async () => {
+    const { fetch } = scriptedFetch([challenge("c1"), token(jwt(0)), challenge("c2"), token(jwt(100))]);
+    const m = manager(iosProvider({ storedKeyId: "K9" }), fetch);
+    expect(await m.getBinding()).toEqual({ token: jwt(0), app_id: "com.a", platform: "ios", roca_id: "r1" });
+    expect(await m.getBinding()).toEqual({ token: jwt(0), app_id: "com.a", platform: "ios", roca_id: "r1" });
+    rocaId = "r2";
+    expect(await m.getBinding()).toEqual({ token: jwt(100), app_id: "com.a", platform: "ios", roca_id: "r2" });
+    rocaId = null;
+    expect(await m.getBinding()).toBeNull();
+  });
+
+  it("getBinding resolves null within waitMs while the first attestation is pending", async () => {
+    const gate = deferred();
+    const { fetch } = scriptedFetch([{ ...challenge("c1"), gate: gate.promise }, token(jwt(0))]);
+    const m = manager(iosProvider({ storedKeyId: "K9" }), fetch);
+    let result: unknown = "pending";
+    void m.getBinding(500).then((b) => (result = b));
+    await time.advance(499);
+    expect(result).toBe("pending");
+    await time.advance(1);
+    expect(result).toBeNull();
+    gate.resolve();
+    await flushMicrotasks();
+    expect(await m.getBinding(500)).toMatchObject({ token: jwt(0), roca_id: "r1" });
+  });
+
   it("a cached record for another app or platform is ignored", async () => {
     for (const bad of [record({ app_id: "com.b" }), record({ platform: "android" }), record({ roca_id: "r0" }), record({ v: 2 }), "{not json", JSON.stringify({ v: 1 })]) {
       store = memoryStorage();

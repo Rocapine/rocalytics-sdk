@@ -1,6 +1,8 @@
+import { createAttestTokenManager, type AttestBinding, type AttestTokenManager } from "../core/attest";
 import { safeDiagnostics, type DiagnosticHandler } from "../core/diagnostics";
 import type { SinkResult } from "../core/sink";
-import { systemClock, type Clock } from "../core/time";
+import { systemClock, systemTimers, type Clock, type Timers } from "../core/time";
+import { secureStoreStorage, toAttestProvider } from "./attestProvider";
 import type { OnboardingRunSnapshot } from "../onboarding/contract";
 import type { PaywallPresentationSnapshot } from "../paywall/contract";
 import { paywallIngestOutcome } from "./paywallSink";
@@ -15,11 +17,13 @@ import {
   buildTrackRequest,
   ROCALYTICS_API_BASE,
   sendRocalyticsRequest,
+  withAuthorization,
   type FetchLike,
   type RequestContext,
   type RocalyticsRequest,
 } from "./requests";
 import type {
+  AttestOptions,
   DemandScoreResult,
   DemandScoreSignals,
   DeviceContext,
@@ -83,6 +87,17 @@ export interface RocalyticsClientOptions {
   installPing?: boolean;
   /** Defaults to `https://track.rocapi.ne`. */
   attributionBaseUrl?: string;
+  /**
+   * App attestation, used when the binary has the RocaAttest module (the
+   * optional attest package) on iOS or Android. The client then attests the
+   * app once, caches the token in the secure store, and sends it as
+   * `Authorization: Bearer <token>` on its rocalytics-api requests (not on
+   * the attribution ping). A request waits at most `waitMs` for the first
+   * token; without one it goes out without the header.
+   */
+  attest?: AttestOptions;
+  /** @internal The attestation's timers. Tests only. */
+  timers?: Timers;
 }
 
 const intlOptions = () => Intl.DateTimeFormat().resolvedOptions();
@@ -118,6 +133,7 @@ export class RocalyticsClient {
   private readonly completionSent = new Set<string>();
   private readonly clock: Clock;
   private readonly report: DiagnosticHandler;
+  private attest: AttestTokenManager | null = null;
 
   constructor(private readonly options: RocalyticsClientOptions = {}) {
     this.clock = options.clock ?? systemClock;
@@ -141,6 +157,28 @@ export class RocalyticsClient {
     return this.options.fetch ? `${url} (custom fetch)` : url;
   }
 
+  /**
+   * `{ Authorization: "Bearer <token>" }` when the client has a token that
+   * fits `batch` (same app_id and platform, and every event's roca_id is null
+   * or this client's roca id), else `{}`. A batch without `app_id` or
+   * `platform` gets `{}`; without `batch`, only the client's roca id is
+   * checked. Waits at most `attest.waitMs` for the first token. Never throws.
+   */
+  async attestHeaders(batch?: { app_id?: string; platform?: string; events?: readonly { roca_id?: string | null }[] }): Promise<Record<string, string>> {
+    try {
+      await this.ready;
+      const binding = await this.binding();
+      if (!binding || binding.roca_id !== this.rocaId) return {};
+      if (batch) {
+        if (batch.app_id !== binding.app_id || batch.platform !== binding.platform) return {};
+        if (batch.events?.some((e) => e.roca_id != null && e.roca_id !== binding.roca_id)) return {};
+      }
+      return { Authorization: `Bearer ${binding.token}` };
+    } catch {
+      return {};
+    }
+  }
+
   /** Sends one paywall presentation snapshot. The send of `createRocalyticsPaywallSink`; it never throws. */
   async sendPaywallPresentation(snapshot: PaywallPresentationSnapshot): Promise<SinkResult> {
     await this.ready;
@@ -148,7 +186,8 @@ export class RocalyticsClient {
     const fetch = this.fetchFn();
     if (!fetch) return { outcome: "transient", reason: "no fetch available" };
     try {
-      const request = buildPaywallPresentationRequest(this.context(), snapshot);
+      let request = buildPaywallPresentationRequest(this.context(), snapshot);
+      if (this.attest) request = await this.authorize(request);
       const response = await fetch(request.url, request.init);
       const body = await response.json().catch(() => undefined);
       return paywallIngestOutcome(response.status, body);
@@ -314,7 +353,8 @@ export class RocalyticsClient {
     const fetch = this.fetchFn();
     if (!fetch) return { outcome: "transient", reason: "no fetch available" };
     try {
-      const request = buildOnboardingResponseRequest(this.context(), toOnboardingRunBody(snapshot));
+      let request = buildOnboardingResponseRequest(this.context(), toOnboardingRunBody(snapshot));
+      if (this.attest) request = await this.authorize(request);
       const response = await fetch(request.url, request.init);
       const body = response.ok ? undefined : await response.json().catch(() => undefined);
       const result = rocalyticsOutcome(response.status, body);
@@ -341,6 +381,7 @@ export class RocalyticsClient {
       return;
     }
     this.native = native;
+    this.attest = this.createAttest(native);
     try {
       if (this.options.identifyOnStart !== false) await this.sendIdentify(await this.deviceIdentifiers(native));
 
@@ -357,6 +398,59 @@ export class RocalyticsClient {
     } catch (error) {
       this.report({ code: "init-failed", message: message(error) });
     }
+  }
+
+  /** The attest token manager, when attestation is on and possible: RocaAttest in the binary, iOS or Android, an app id. */
+  private createAttest(native: RocalyticsModules): AttestTokenManager | null {
+    const options = this.options.attest;
+    const appId = native.application.applicationId;
+    if (options?.disabled === true || !native.attest || !appId) return null;
+    try {
+      const provider = toAttestProvider(native.attest, native.platform.OS);
+      if (!provider) return null;
+      return createAttestTokenManager({
+        provider,
+        appId,
+        getRocaId: () => this.rocaId,
+        attestUrl: `${this.options.baseUrl ?? ROCALYTICS_API_BASE}/functions/v1/attest`,
+        fetch: (url, init) => {
+          const fetch = this.fetchFn();
+          // FetchLike is typed POST-only; the manager also GETs the challenge.
+          return fetch ? fetch(url, init as RocalyticsRequest["init"]) : Promise.reject(new Error("no fetch available"));
+        },
+        storage: secureStoreStorage(native.secureStore),
+        clock: this.clock,
+        timers: this.options.timers ?? systemTimers,
+        appVersion: native.application.nativeApplicationVersion,
+        cloudProjectNumber: options?.cloudProjectNumber,
+        onDiagnostic: this.report,
+      });
+    } catch (error) {
+      this.report({ code: "attest-unavailable", message: `requests go out without an attest token: ${message(error)}` });
+      return null;
+    }
+  }
+
+  /** The manager's token and what it is bound to, or null. Never throws. */
+  private async binding(): Promise<AttestBinding | null> {
+    if (!this.attest) return null;
+    try {
+      return await this.attest.getBinding(this.options.attest?.waitMs);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * `request` with the token, when the token is bound to the request's own
+   * X-Application-ID, X-Platform and X-Roca-ID (the roca id may have changed
+   * while the request waited); else `request` as is.
+   */
+  private async authorize(request: RocalyticsRequest): Promise<RocalyticsRequest> {
+    const binding = await this.binding();
+    const h = request.init.headers;
+    const fits = binding !== null && binding.app_id === h["X-Application-ID"] && binding.platform === h["X-Platform"] && binding.roca_id === h["X-Roca-ID"];
+    return withAuthorization(request, fits ? binding.token : null);
   }
 
   private loadModules(): RocalyticsModules | null {
@@ -457,10 +551,12 @@ export class RocalyticsClient {
     return this.options.fetch ?? (globalThis as { fetch?: FetchLike }).fetch;
   }
 
+  /** Sends `request`, with the attest token except to the attribution worker. Without a manager it sends at once, as before attestation. */
   private send(request: RocalyticsRequest, endpoint: string, detail?: string) {
     const fetch = this.fetchFn();
     if (!fetch) return Promise.reject(new Error(`[ROCALYTICS] ${endpoint} failed: no fetch available`));
-    return sendRocalyticsRequest(fetch, request, endpoint, detail);
+    if (!this.attest || endpoint === "install-ping") return sendRocalyticsRequest(fetch, request, endpoint, detail);
+    return this.authorize(request).then((authorized) => sendRocalyticsRequest(fetch, authorized, endpoint, detail));
   }
 
   private async sendIdentify(identifiers: IdentifyParams): Promise<void> {

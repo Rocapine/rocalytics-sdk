@@ -29,10 +29,12 @@ export {
   getEventId,
   rocalyticsHeaders,
   sendRocalyticsRequest,
+  withAuthorization,
 } from "./requests";
 export type { FetchLike, FetchResponseLike, RequestContext, RocalyticsRequest, TrackRequestInput } from "./requests";
 export type {
   AdjustAttribution,
+  AttestOptions,
   DemandScoreResult,
   DemandScoreSignalScore,
   DemandScoreSignals,
