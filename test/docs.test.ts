@@ -31,7 +31,7 @@ describe("public repository hygiene", () => {
   const files = [
     "README.md",
     "CHANGELOG.md",
-    ...fs.readdirSync(DOCS).map((f) => `docs/${f}`),
+    ...listFiles(DOCS).map((f) => path.relative(ROOT, f)),
     ...listTs(path.join(ROOT, "src")).map((f) => path.relative(ROOT, f)),
   ];
   const denied = [/\/Users\//, /~\/Developer/, /claude\.ai\//];
@@ -43,6 +43,12 @@ describe("public repository hygiene", () => {
     });
   }
 });
+
+function listFiles(dir: string): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
+    d.isDirectory() ? listFiles(path.join(dir, d.name)) : [path.join(dir, d.name)],
+  );
+}
 
 function listTs(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
