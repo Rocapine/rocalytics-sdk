@@ -252,6 +252,21 @@ describe("RocalyticsClient attestation", () => {
     await vi.waitFor(async () => expect(await client.attestHeaders()).toEqual({ Authorization: `Bearer ${attestJwt(ROCA_ID, 1)}` }));
   });
 
+  it.each([
+    [{ waitMs: 500 }, 500],
+    [{}, 3000],
+  ])("attestHeaders() with attest %j resolves {} after %i ms while start-up never finishes (identify hangs)", async (attest, waitMs) => {
+    const time = new ManualTime();
+    const never = new Promise<never>(() => {});
+    const { client } = setup({ options: { fetch: () => never, clock: time.clock, timers: time.timers, attest, installPing: false } });
+    let result: unknown = "pending";
+    void client.attestHeaders().then((h) => (result = h));
+    await time.advance(waitMs - 1);
+    expect(result).toBe("pending");
+    await time.advance(1);
+    expect(result).toEqual({});
+  });
+
   describe("attestHeaders(batch)", () => {
     const event = (roca_id: string | null) => ({ roca_id });
     const batch = (o: Partial<EventBatch> = {}): EventBatch =>

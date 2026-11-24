@@ -1,4 +1,4 @@
-import { createAttestTokenManager, type AttestBinding, type AttestTokenManager } from "../core/attest";
+import { DEFAULT_ATTEST_WAIT_MS, createAttestTokenManager, type AttestBinding, type AttestTokenManager } from "../core/attest";
 import { safeDiagnostics, type DiagnosticHandler } from "../core/diagnostics";
 import type { SinkResult } from "../core/sink";
 import { systemClock, systemTimers, type Clock, type Timers } from "../core/time";
@@ -92,13 +92,16 @@ export interface RocalyticsClientOptions {
    * optional attest package) on iOS or Android. The client then attests the
    * app once, caches the token in the secure store, and sends it as
    * `Authorization: Bearer <token>` on its rocalytics-api requests (not on
-   * the attribution ping). A request waits at most `waitMs` for the first
-   * token; without one it goes out without the header.
+   * the attribution ping). A request waits at most `waitMs`, and only while
+   * no token is cached; without one it goes out without the header.
    */
   attest?: AttestOptions;
   /** @internal The attestation's timers. Tests only. */
   timers?: Timers;
 }
+
+/** The fields of an analytics batch that `attestHeaders` matches the token against. */
+type AttestBatch = { app_id?: string; platform?: string; events?: readonly { roca_id?: string | null }[] };
 
 const intlOptions = () => Intl.DateTimeFormat().resolvedOptions();
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -162,9 +165,35 @@ export class RocalyticsClient {
    * fits `batch` (same app_id and platform, and every event's roca_id is null
    * or this client's roca id), else `{}`. A batch without `app_id` or
    * `platform` gets `{}`; without `batch`, only the client's roca id is
-   * checked. Waits at most `attest.waitMs` for the first token. Never throws.
+   * checked. Resolves within `attest.waitMs` (default 3000), start-up
+   * included: `{}` when that runs out. Never throws.
    */
-  async attestHeaders(batch?: { app_id?: string; platform?: string; events?: readonly { roca_id?: string | null }[] }): Promise<Record<string, string>> {
+  attestHeaders(batch?: AttestBatch): Promise<Record<string, string>> {
+    const timers = this.options.timers ?? systemTimers;
+    return new Promise((resolve) => {
+      let done = false;
+      let handle: unknown;
+      const finish = (headers: Record<string, string>) => {
+        if (done) return;
+        done = true;
+        try {
+          timers.clearTimeout(handle);
+        } catch {
+          // nothing to clear
+        }
+        resolve(headers);
+      };
+      try {
+        handle = timers.setTimeout(() => finish({}), this.options.attest?.waitMs ?? DEFAULT_ATTEST_WAIT_MS);
+      } catch {
+        finish({});
+      }
+      this.batchHeaders(batch).then(finish, () => finish({}));
+    });
+  }
+
+  /** `attestHeaders` without its time bound. */
+  private async batchHeaders(batch?: AttestBatch): Promise<Record<string, string>> {
     try {
       await this.ready;
       const binding = await this.binding();
