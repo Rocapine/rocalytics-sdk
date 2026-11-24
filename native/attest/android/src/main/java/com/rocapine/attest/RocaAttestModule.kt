@@ -12,13 +12,16 @@ import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.security.MessageDigest
+import java.util.concurrent.CancellationException
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Play Integrity (standard requests) for the Rocalytics SDK.
  *
  * Rejections carry `E_PI_<NAME>` for a StandardIntegrityException, NAME being the
- * StandardIntegrityErrorCode constant's name, and `E_ATTEST_UNKNOWN` otherwise.
- * The SDK classifies provider failures by this code.
+ * StandardIntegrityErrorCode constant's name, and `E_ATTEST_UNKNOWN` otherwise
+ * (a cancelled task, or anything thrown synchronously). Each call settles its
+ * promise exactly once. The SDK classifies provider failures by this code.
  */
 class RocaAttestModule : Module() {
   @Volatile private var provider: StandardIntegrityTokenProvider? = null
@@ -31,39 +34,49 @@ class RocaAttestModule : Module() {
     AsyncFunction("isSupported") { true }
 
     AsyncFunction("prepare") { cloudProjectNumber: String, promise: Promise ->
-      val number = cloudProjectNumber.trim().toLongOrNull()
-      if (number == null) {
-        promise.reject(
-          "E_PI_CLOUD_PROJECT_NUMBER_IS_INVALID",
-          "cloud project number must be an integer, got \"$cloudProjectNumber\"",
-          null,
-        )
-        return@AsyncFunction
+      settle(promise) { once ->
+        val number = cloudProjectNumber.trim().toLongOrNull()
+        if (number == null) {
+          once.reject(
+            "E_PI_CLOUD_PROJECT_NUMBER_IS_INVALID",
+            "cloud project number must be an integer, got \"$cloudProjectNumber\"",
+            null,
+          )
+          return@settle
+        }
+        prepareProvider(number, onSuccess = { once.resolve(null) }, onFailure = { reject(once, it) })
       }
-      prepareProvider(number, onSuccess = { promise.resolve(null) }, onFailure = { reject(promise, it) })
     }
 
     AsyncFunction("requestToken") { binding: String, promise: Promise ->
-      val hash = requestHash(binding)
-      val current = provider
-      if (current == null) {
-        promise.reject(
-          "E_PI_INTEGRITY_TOKEN_PROVIDER_INVALID",
-          "requestToken called before prepare",
-          null,
-        )
-        return@AsyncFunction
-      }
-      request(current, hash, onSuccess = { promise.resolve(it) }) { error ->
-        val number = cloudProjectNumber
-        if (errorCode(error) == StandardIntegrityErrorCode.INTEGRITY_TOKEN_PROVIDER_INVALID && number != null) {
-          // The provider expired: prepare again with the last project number and retry once.
+      settle(promise) { once -> requestToken(binding, once) }
+    }
+  }
+
+  private fun requestToken(binding: String, promise: Once) {
+    val hash = requestHash(binding)
+    val current = provider
+    if (current == null) {
+      promise.reject(
+        "E_PI_INTEGRITY_TOKEN_PROVIDER_INVALID",
+        "requestToken called before prepare",
+        null,
+      )
+      return
+    }
+    request(current, hash, onSuccess = { promise.resolve(it) }) { error ->
+      val number = cloudProjectNumber
+      if (errorCode(error) == StandardIntegrityErrorCode.INTEGRITY_TOKEN_PROVIDER_INVALID && number != null) {
+        // The provider expired: prepare again with the last project number and retry once.
+        try {
           prepareProvider(number, onFailure = { reject(promise, it) }) { fresh ->
             request(fresh, hash, onSuccess = { promise.resolve(it) }) { reject(promise, it) }
           }
-        } else {
-          reject(promise, error)
+        } catch (thrown: Exception) {
+          reject(promise, thrown)
         }
+      } else {
+        reject(promise, error)
       }
     }
   }
@@ -96,15 +109,49 @@ class RocaAttestModule : Module() {
     provider.request(request).handle(onFailure) { onSuccess(it.token()) }
   }
 
-  private fun reject(promise: Promise, error: Exception) {
+  private fun reject(promise: Once, error: Exception) {
     val name = (error as? StandardIntegrityException)?.let { errorName(it.errorCode) }
     promise.reject(name?.let { "E_PI_$it" } ?: "E_ATTEST_UNKNOWN", error.message ?: error.toString(), error)
   }
+
+  /** Runs `body` with a once-only view of `promise`; a synchronous throw rejects it (E_PI_* or E_ATTEST_UNKNOWN). */
+  private inline fun settle(promise: Promise, body: (Once) -> Unit) {
+    val once = Once(promise)
+    try {
+      body(once)
+    } catch (error: Exception) {
+      reject(once, error)
+    }
+  }
 }
 
+/** A promise that settles at most once: a late or second resolve/reject is dropped. */
+private class Once(private val promise: Promise) {
+  private val settled = AtomicBoolean(false)
+
+  fun resolve(value: Any?) {
+    if (settled.compareAndSet(false, true)) promise.resolve(value)
+  }
+
+  fun reject(code: String, message: String?, cause: Throwable?) {
+    if (settled.compareAndSet(false, true)) promise.reject(code, message, cause)
+  }
+}
+
+/** Calls exactly one of the callbacks once the task completes; a cancelled task fails (E_ATTEST_UNKNOWN), and a throwing onSuccess fails too. */
 private fun <T> Task<T>.handle(onFailure: (Exception) -> Unit, onSuccess: (T) -> Unit) {
-  addOnSuccessListener { onSuccess(it) }
-  addOnFailureListener { onFailure(it) }
+  addOnCompleteListener { task ->
+    when {
+      task.isCanceled -> onFailure(CancellationException("Play Integrity task was cancelled"))
+      task.isSuccessful ->
+        try {
+          onSuccess(task.result)
+        } catch (error: Exception) {
+          onFailure(error)
+        }
+      else -> onFailure(task.exception ?: IllegalStateException("Play Integrity task failed without an exception"))
+    }
+  }
 }
 
 private fun errorCode(error: Exception): Int? = (error as? StandardIntegrityException)?.errorCode
