@@ -1,4 +1,6 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -27,6 +29,23 @@ describe("publish-attest workflow (npm trusted publishing)", () => {
     expect(yml).toContain("GITHUB_REF_NAME#attest-v");
     expect(yml).toContain("require('./package.json').version");
     expect(yml).toMatch(/working-directory: native\/attest/);
+  });
+
+  it("the tag check exits 1 on a tag/version mismatch, 0 on a match", () => {
+    const step = /- name: Release tag matches native\/attest\/package\.json version\n\s+run: \|\n((?:\s{10}.*\n)+)/.exec(yml);
+    expect(step).not.toBeNull();
+    const script = step![1]!.replace(/^ {10}/gm, "");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "attest-tag-"));
+    try {
+      fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ version: "0.1.0" }));
+      const run = (tag: string) => spawnSync("bash", ["-c", script], { cwd: dir, env: { ...process.env, GITHUB_REF_NAME: tag }, encoding: "utf8" });
+      const mismatch = run("attest-v0.2.0");
+      expect(mismatch.status).toBe(1);
+      expect(mismatch.stdout).toContain("::error::tag attest-v0.2.0 does not match native/attest/package.json version 0.1.0");
+      expect(run("attest-v0.1.0").status).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("gets an OIDC token and holds no npm token", () => {
