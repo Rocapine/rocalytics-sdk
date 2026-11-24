@@ -8,7 +8,7 @@ export interface HttpSinkOptions {
   /**
    * Extra request headers, such as an authorization token. A function is
    * called for every send attempt with that attempt's payload; if it throws
-   * or rejects, the payload is sent without these headers.
+   * or rejects, the send is transient.
    */
   headers?: Headers | ((payload: unknown) => Headers | Promise<Headers>);
   /** Defaults to the global `fetch`. */
@@ -43,12 +43,7 @@ export function createHttpSink(options: HttpSinkOptions): Sink<unknown> {
       const controller = Abort ? new Abort() : null;
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        let extra: Headers | undefined;
-        try {
-          extra = typeof options.headers === "function" ? await options.headers(payload) : options.headers;
-        } catch {
-          extra = undefined;
-        }
+        const extra = typeof options.headers === "function" ? await options.headers(payload) : options.headers;
         const request = doFetch(options.url, {
           method: "POST",
           headers: { ...extra, "content-type": "application/json" },

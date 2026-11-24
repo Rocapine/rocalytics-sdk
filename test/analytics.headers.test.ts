@@ -122,11 +122,11 @@ describe("createHttpSink headers", () => {
     expect(result.outcome).toBe("accepted");
   });
 
-  it("a throwing function sends without extra headers, not a transient failure", async () => {
+  it("a throwing function is still a transient failure", async () => {
     const { calls, result } = await run(() => {
       throw new Error("no");
     });
-    expect(calls).toHaveLength(1);
-    expect(result.outcome).toBe("accepted");
+    expect(calls).toHaveLength(0);
+    expect(result.outcome).toBe("transient");
   });
 });

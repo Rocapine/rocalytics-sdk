@@ -98,7 +98,15 @@ export function createAnalytics(config: AnalyticsConfig): Analytics {
   const sink: Sink<EventBatch> =
     config.sink ?? (createHttpSink({
         url: config.endpoint ?? ROCALYTICS_INGEST_URL,
-        headers: config.headers ? (p) => config.headers!(p as EventBatch) : undefined,
+        headers: config.headers
+          ? async (p) => {
+              try {
+                return await config.headers!(p as EventBatch);
+              } catch {
+                return {};
+              }
+            }
+          : undefined,
       }) as Sink<EventBatch>);
   const flushAt = Math.max(1, Math.min(config.flushAt ?? 50, MAX_BATCH));
   const intervalMs = config.flushIntervalMs ?? 15_000;
