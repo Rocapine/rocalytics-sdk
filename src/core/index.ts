@@ -18,3 +18,5 @@ export type { KeyValueStorage, SerialStore } from "./storage";
 export { codePointLength, utf8ByteLength } from "./text";
 export { systemClock, systemTimers, toTimestamp } from "./time";
 export type { Clock, Timers } from "./time";
+export { bindingString, readTokenLifetime } from "./attest";
+export type { AttestPlatform, AttestProvider, AttestState } from "./attest";
