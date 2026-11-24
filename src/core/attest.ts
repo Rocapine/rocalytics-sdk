@@ -1,5 +1,10 @@
 // App attestation: types, binding string, token lifetime and classification of
-// the API's and the native module's answers. Pure: no dependency, no I/O.
+// the API's and the native module's answers, and the token manager. Pure: no
+// dependency; every I/O (provider, fetch, storage, clock, timers) is injected.
+
+import { safeDiagnostics, type DiagnosticHandler } from "./diagnostics";
+import type { KeyValueStorage } from "./storage";
+import type { Clock, Timers } from "./time";
 
 /** The string the native module hashes (SHA-256 of its UTF-8 bytes) to bind a proof to one challenge, app and install. */
 export const bindingString = (challenge: string, appId: string, rocaId: string): string => `${challenge}|${appId}|${rocaId}`;
@@ -92,10 +97,323 @@ const PROVIDER_ERRORS: Record<string, ProviderErrorAction> = {
   E_PI_TOO_MANY_REQUESTS: "backoff",
   E_PI_INTERNAL_ERROR: "backoff",
   E_PI_INTEGRITY_TOKEN_PROVIDER_INVALID: "backoff", // the module already retried once
+  E_PI_CLIENT_TRANSIENT_ERROR: "backoff",
+  E_PI_CANNOT_BIND_TO_SERVICE: "backoff",
   E_PI_CLOUD_PROJECT_NUMBER_IS_INVALID: "config",
 };
 
 export function classifyProviderError(error: unknown): ProviderErrorAction {
   const code = field(error, "code");
   return typeof code === "string" && Object.prototype.hasOwnProperty.call(PROVIDER_ERRORS, code) ? (PROVIDER_ERRORS[code] as ProviderErrorAction) : "rejected";
+}
+
+export interface AttestFetch {
+  (url: string, init: { method: "GET" | "POST"; headers: Record<string, string>; body?: string }): Promise<{ status: number; json(): Promise<unknown> }>;
+}
+
+export interface AttestManagerOptions {
+  provider: AttestProvider;
+  appId: string;
+  /** The current roca id, read on every getToken: a change (adoptRocaId) invalidates the cached token. */
+  getRocaId(): string | null;
+  /** `${baseUrl}/functions/v1/attest` */
+  attestUrl: string;
+  fetch: AttestFetch;
+  storage: KeyValueStorage;
+  clock: Clock;
+  timers: Timers;
+  appVersion?: string | null;
+  cloudProjectNumber?: string; // Android; without it Android is unsupported
+  onDiagnostic?: DiagnosticHandler;
+}
+
+export interface AttestTokenManager {
+  /** A token valid for the current app, platform and roca id, or null. Resolves within `waitMs` (default 3000). Never throws. */
+  getToken(waitMs?: number): Promise<string | null>;
+  state(): AttestState;
+}
+
+export const ATTEST_TOKEN_KEY = "rocalytics.attest.token.v1";
+export const RENEW_BEFORE_MS = 2 * 3600_000;
+export const BACKOFF_MS = [30_000, 120_000, 600_000] as const;
+
+const DEFAULT_WAIT_MS = 3000;
+/** The API's token lifetime (`exp = iat + 86400`): the bound for a token whose own lifetime can't be read. */
+const MAX_LIFETIME_S = 86400;
+
+interface TokenRecord {
+  v: 1;
+  token: string;
+  app_id: string;
+  platform: AttestPlatform;
+  roca_id: string;
+  local_expires_at: number;
+}
+
+type FlightOutcome = AttestResponseAction | { action: "config"; detail: string };
+
+const describeError = (error: unknown): string => {
+  const code = field(error, "code");
+  const message = error instanceof Error ? error.message : String(error);
+  return typeof code === "string" && code !== message ? `${code}: ${message}` : message;
+};
+
+export function createAttestTokenManager(options: AttestManagerOptions): AttestTokenManager {
+  const { provider, appId, attestUrl, clock, timers, storage } = options;
+  const platform = provider.platform;
+  const report = safeDiagnostics(options.onDiagnostic);
+  const appVersion = typeof options.appVersion === "string" && options.appVersion.length <= 32 ? options.appVersion : undefined;
+
+  let record: TokenRecord | null = null;
+  let terminal: "unsupported" | "rejected" | null = null;
+  let flight: { rocaId: string; renewing: boolean; promise: Promise<string | null> } | null = null;
+  let backoffUntil: number | null = null;
+  let backoffStep = 0;
+  let supported: boolean | undefined;
+  let prepared = false;
+  let loaded: Promise<void> | null = null;
+
+  const storageFailed = (what: string, error: unknown) =>
+    report({ code: "attest-storage", message: `the attest token could not be ${what} ${ATTEST_TOKEN_KEY}, so it is kept in memory only: ${describeError(error)}` });
+
+  /** The record, when it belongs to this app, platform and roca id and has time left (never more than a token's lifetime). */
+  const usable = (rocaId: string): TokenRecord | null => {
+    if (!record || record.app_id !== appId || record.platform !== platform || record.roca_id !== rocaId) return null;
+    const left = record.local_expires_at - clock.now();
+    const lifetime = readTokenLifetime(record.token) ?? MAX_LIFETIME_S;
+    return left > 0 && left <= lifetime * 1000 ? record : null;
+  };
+
+  const parseRecord = (raw: string): TokenRecord | null => {
+    try {
+      const r = JSON.parse(raw) as Partial<TokenRecord> | null;
+      if (!r || r.v !== 1 || typeof r.token !== "string" || r.token === "" || typeof r.roca_id !== "string" || typeof r.local_expires_at !== "number") return null;
+      return r.app_id === appId && r.platform === platform ? (r as TokenRecord) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const load = (): Promise<void> =>
+    (loaded ??= (async () => {
+      try {
+        const raw = await storage.getItem(ATTEST_TOKEN_KEY);
+        // A flight can't have landed before the load: every getToken awaits it first.
+        if (typeof raw === "string") record = parseRecord(raw);
+      } catch (error) {
+        storageFailed("read from", error);
+      }
+    })());
+
+  const persist = (r: TokenRecord) => {
+    try {
+      Promise.resolve(storage.setItem(ATTEST_TOKEN_KEY, JSON.stringify(r))).catch((error: unknown) => storageFailed("written to", error));
+    } catch (error) {
+      storageFailed("written to", error);
+    }
+  };
+
+  const request = async (method: "GET" | "POST", url: string, body?: unknown): Promise<{ status: number; body: unknown }> => {
+    try {
+      const res =
+        method === "GET"
+          ? await options.fetch(url, { method, headers: {} })
+          : await options.fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      let json: unknown;
+      try {
+        json = await res.json();
+      } catch {
+        json = undefined;
+      }
+      return { status: res.status, body: json };
+    } catch {
+      return { status: 0, body: undefined };
+    }
+  };
+
+  /** One challenge, one proof, one POST. */
+  const attempt = async (rocaId: string, freshKey: boolean): Promise<FlightOutcome & { expiresAt?: unknown }> => {
+    const ch = await request("GET", `${attestUrl}/challenge?app_id=${encodeURIComponent(appId)}&platform=${platform}`);
+    if (ch.status !== 200) return classifyAttestResponse(ch.status, ch.body);
+    const challenge = field(ch.body, "challenge");
+    if (typeof challenge !== "string" || challenge === "") return { action: "rejected", detail: "challenge 200 without a challenge" };
+    const binding = bindingString(challenge, appId, rocaId);
+
+    let body: Record<string, unknown>;
+    let newKeyId: string | null = null;
+    try {
+      if (provider.platform === "ios") {
+        const keyId = freshKey ? null : await provider.getStoredKeyId();
+        if (keyId) {
+          body = { kind: "ios_assertion", app_id: appId, roca_id: rocaId, challenge, key_id: keyId, assertion: await provider.generateAssertion(keyId, binding) };
+        } else {
+          newKeyId = await provider.generateKey();
+          body = { kind: "ios_attestation", app_id: appId, roca_id: rocaId, challenge, key_id: newKeyId, attestation: await provider.attestKey(newKeyId, binding) };
+        }
+      } else {
+        if (!prepared) {
+          await provider.prepare(options.cloudProjectNumber as string);
+          prepared = true;
+        }
+        body = { kind: "android_integrity", app_id: appId, roca_id: rocaId, challenge, integrity_token: await provider.requestToken(binding) };
+      }
+    } catch (error) {
+      const action = classifyProviderError(error);
+      return action === "new_key" ? { action } : { action, detail: describeError(error) };
+    }
+    if (appVersion !== undefined) body.app_version = appVersion;
+
+    const res = await request("POST", attestUrl, body);
+    const outcome = classifyAttestResponse(res.status, res.body);
+    if (outcome.action === "token" && newKeyId !== null && provider.platform === "ios") {
+      try {
+        await provider.setStoredKeyId(newKeyId);
+      } catch {
+        // The token is good; the next renewal attests a new key.
+      }
+    }
+    return { ...outcome, expiresAt: field(res.body, "expires_at") };
+  };
+
+  const stop = (state: "unsupported" | "rejected", code: string, message: string): null => {
+    terminal = state;
+    report({ code, message: `${message}; requests go out without an attest token for the rest of this session` });
+    return null;
+  };
+
+  const backoff = (): null => {
+    backoffUntil = clock.now() + BACKOFF_MS[Math.min(backoffStep, BACKOFF_MS.length - 1)];
+    backoffStep++;
+    return null;
+  };
+
+  const accept = (token: string, expiresAt: unknown, rocaId: string): string => {
+    backoffUntil = null;
+    backoffStep = 0;
+    const now = clock.now();
+    const lifetime = readTokenLifetime(token) ?? (typeof expiresAt === "number" ? Math.min(expiresAt - now / 1000, MAX_LIFETIME_S) : 0);
+    if (lifetime > 0) {
+      record = { v: 1, token, app_id: appId, platform, roca_id: rocaId, local_expires_at: now + lifetime * 1000 };
+      persist(record);
+    }
+    return token;
+  };
+
+  const fly = async (rocaId: string): Promise<string | null> => {
+    if (provider.platform === "android" && !options.cloudProjectNumber)
+      return stop("unsupported", "attest-config", "Android attestation needs attest.cloudProjectNumber");
+    if (supported === undefined) {
+      try {
+        supported = await provider.isSupported();
+      } catch (error) {
+        const action = classifyProviderError(error);
+        if (action === "unsupported") return stop("unsupported", "attest-unsupported", `attestation is not available on this device: ${describeError(error)}`);
+        if (action === "config") return stop("unsupported", "attest-config", `attestation is misconfigured: ${describeError(error)}`);
+        if (action === "rejected") return stop("rejected", "attest-rejected", `attestation failed: ${describeError(error)}`);
+        return backoff();
+      }
+    }
+    if (!supported) return stop("unsupported", "attest-unsupported", "attestation is not available on this device");
+
+    let newChallenge = false;
+    let newKey = false;
+    let freshKey = false;
+    for (;;) {
+      const outcome = await attempt(rocaId, freshKey);
+      switch (outcome.action) {
+        case "token":
+          return accept(outcome.token, outcome.expiresAt, rocaId);
+        case "new_challenge":
+          if (newChallenge) return backoff();
+          newChallenge = true;
+          break;
+        case "new_key":
+          if (newKey) return backoff();
+          newKey = true;
+          freshKey = true;
+          if (provider.platform === "ios") {
+            try {
+              await provider.setStoredKeyId(null);
+            } catch {
+              // freshKey already skips the stored key for this flight.
+            }
+          }
+          break;
+        case "unsupported":
+          return stop("unsupported", "attest-unsupported", `attestation is not available: ${outcome.detail}`);
+        case "config":
+          return stop("unsupported", "attest-config", `attestation is misconfigured: ${outcome.detail}`);
+        case "rejected":
+          return stop("rejected", "attest-rejected", `attestation was rejected: ${outcome.detail}`);
+        case "backoff":
+          return backoff();
+      }
+    }
+  };
+
+  const startFlight = (rocaId: string, renewing: boolean) => {
+    const f = { rocaId, renewing, promise: Promise.resolve<string | null>(null) };
+    f.promise = fly(rocaId)
+      .catch(() => backoff())
+      .then((token) => {
+        if (flight === f) flight = null;
+        return token;
+      });
+    flight = f;
+    return f;
+  };
+
+  const inBackoff = () => backoffUntil !== null && clock.now() < backoffUntil;
+
+  const obtain = async (): Promise<string | null> => {
+    await load();
+    const rocaId = options.getRocaId();
+    if (rocaId === null || terminal) return null;
+    const cached = usable(rocaId);
+    if (cached) {
+      if (cached.local_expires_at - clock.now() <= RENEW_BEFORE_MS && !flight && !inBackoff()) startFlight(rocaId, true);
+      return cached.token;
+    }
+    if (flight && flight.rocaId !== rocaId) {
+      // A flight for another roca id: its token is not ours. Wait for it, then decide again.
+      await flight.promise;
+      return obtain();
+    }
+    const f = flight ?? (inBackoff() ? null : startFlight(rocaId, false));
+    if (!f) return null;
+    const token = await f.promise;
+    return token !== null && options.getRocaId() === f.rocaId ? token : null;
+  };
+
+  return {
+    getToken(waitMs = DEFAULT_WAIT_MS) {
+      return new Promise<string | null>((resolve) => {
+        let settled = false;
+        let handle: unknown;
+        const finish = (value: string | null) => {
+          if (settled) return;
+          settled = true;
+          try {
+            timers.clearTimeout(handle);
+          } catch {
+            // nothing to clear
+          }
+          resolve(value);
+        };
+        try {
+          handle = timers.setTimeout(() => finish(null), waitMs);
+          obtain().then(finish, () => finish(null));
+        } catch {
+          finish(null);
+        }
+      });
+    },
+    state() {
+      if (terminal) return terminal;
+      if (flight) return flight.renewing ? "renewing" : "fetching";
+      if (backoffUntil !== null) return "backoff";
+      const rocaId = options.getRocaId();
+      return rocaId !== null && usable(rocaId) ? "valid" : "idle";
+    },
+  };
 }

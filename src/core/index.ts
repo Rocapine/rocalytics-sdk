@@ -18,5 +18,5 @@ export type { KeyValueStorage, SerialStore } from "./storage";
 export { codePointLength, utf8ByteLength } from "./text";
 export { systemClock, systemTimers, toTimestamp } from "./time";
 export type { Clock, Timers } from "./time";
-export { bindingString, readTokenLifetime } from "./attest";
-export type { AttestPlatform, AttestProvider, AttestState } from "./attest";
+export { ATTEST_TOKEN_KEY, BACKOFF_MS, RENEW_BEFORE_MS, bindingString, createAttestTokenManager, readTokenLifetime } from "./attest";
+export type { AttestFetch, AttestManagerOptions, AttestPlatform, AttestProvider, AttestState, AttestTokenManager } from "./attest";
