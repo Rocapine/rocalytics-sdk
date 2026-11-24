@@ -11,7 +11,9 @@
     "app.plugin.js",
     "build",
     "expo-module.config.json",
-    "!plugin/*.test.js"
+    "!plugin/*.test.js",
+    "!android/build",
+    "!android/.gradle"
   ],
   "scripts": {
     "build": "rm -rf build && tsc -p tsconfig.json",
@@ -45,7 +47,7 @@
     "expo-modules-core": "*"
   },
   "devDependencies": {
-    "expo-modules-core": "*",
+    "expo-modules-core": "^58.1.0",
     "typescript": "^5.9.3"
   }
 }

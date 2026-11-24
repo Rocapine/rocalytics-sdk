@@ -3,13 +3,15 @@
 // iOS: sets the App Attest environment entitlement. "production" (the default) is what
 // TestFlight and App Store builds need; "development" is for builds signed with a development
 // profile that should talk to Apple's development App Attest environment.
-// Android: nothing to configure.
+// Android: nothing to configure (Play Integrity needs no manifest entry).
 
 const ENTITLEMENT = "com.apple.developer.devicecheck.appattest-environment";
 const ENVIRONMENTS = ["production", "development"];
 
 function setAppAttestEnvironment(entitlements, props) {
-  const environment = (props && props.appAttestEnvironment) || "production";
+  const value = props == null ? undefined : props.appAttestEnvironment;
+  // Only a missing option defaults; "", false and the like are mistakes, not "use the default".
+  const environment = value == null ? "production" : value;
   if (!ENVIRONMENTS.includes(environment)) {
     throw new Error(
       `@rocapine/rocalytics-attest: appAttestEnvironment must be "production" or "development", got ${JSON.stringify(environment)}`,

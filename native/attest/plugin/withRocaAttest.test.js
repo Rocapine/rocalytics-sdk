@@ -15,6 +15,8 @@ const baseConfig = { name: "app", slug: "app", entitlements: { "aps-environment"
 test("defaults the App Attest environment to production", () => {
   assert.equal(withRocaAttest(baseConfig).entitlements[ENTITLEMENT], "production");
   assert.equal(withRocaAttest(baseConfig, {}).entitlements[ENTITLEMENT], "production");
+  assert.equal(withRocaAttest(baseConfig, { appAttestEnvironment: undefined }).entitlements[ENTITLEMENT], "production");
+  assert.equal(withRocaAttest(baseConfig, { appAttestEnvironment: null }).entitlements[ENTITLEMENT], "production");
 });
 
 test("sets production", () => {
@@ -33,6 +35,12 @@ test("keeps the other entitlements", () => {
 
 test("rejects an unknown environment", () => {
   assert.throws(() => withRocaAttest(baseConfig, { appAttestEnvironment: "staging" }), /appAttestEnvironment/);
+});
+
+test("rejects an empty or non-string environment instead of defaulting", () => {
+  for (const appAttestEnvironment of ["", false, 0, "Production"]) {
+    assert.throws(() => withRocaAttest(baseConfig, { appAttestEnvironment }), /appAttestEnvironment/);
+  }
 });
 
 test("app.plugin.js exports the plugin", () => {
