@@ -2,8 +2,8 @@
 // become the rocalytics-api device-test fixtures (see scripts/capture-attest-fixtures.md).
 // Call one of these from any button of a development build that has the attest
 // package installed. Nothing here is shipped, and nothing captured is committed.
+import type { AttestNativeModule } from "@rocapine/rocalytics-sdk/client";
 import { bindingString } from "@rocapine/rocalytics-sdk/core";
-import type { AttestNativeModule } from "../src/client/native";
 
 declare const require: (id: string) => unknown;
 

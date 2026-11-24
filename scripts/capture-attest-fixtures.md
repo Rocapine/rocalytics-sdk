@@ -18,7 +18,7 @@ await captureIosProof({ apiBaseUrl, appId, rocaId, teamId, bundleId });
 await captureAndroidProof({ apiBaseUrl, appId, rocaId, cloudProjectNumber });
 ```
 
-Each call fetches its challenges from the dev API, runs the native module and logs the JSON (read it from the Metro / device log).
+Each call fetches its challenges from the dev API (the attest endpoints need no `apikey` or `Authorization` header: they run with `verify_jwt = false`), runs the native module and logs the JSON (read it from the Metro / device log).
 
 iOS output: `challenge`, `app_id`, `roca_id`, `key_id`, `attestation`, `assertions` (two `{ challenge, assertion }`), `team_id`, `bundle_id`, `captured_at`. Save it as `supabase/functions/attest/fixtures/ios.json` in rocalytics-api.
 

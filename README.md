@@ -367,6 +367,26 @@ export function setUpOnboardingTracking(storage: KeyValueStorage, context: () =>
 }
 ```
 
+### Attestation
+The client can prove to rocalytics-api that its requests come from the genuine app (iOS App Attest, Android Play Integrity). The proof is a short-lived token sent as `Authorization: Bearer <token>` on the client's requests. It is optional and off until the app ships the native module.
+
+1. Install the native package, which is separate from this one and not a peer of it, and add its config plugin:
+
+   ```sh
+   npx expo install @rocapine/rocalytics-attest
+   ```
+
+   ```json
+   ["@rocapine/rocalytics-attest", { "appAttestEnvironment": "production" }]
+   ```
+
+   Use `"development"` for a development build. Rebuild the app: the module is native.
+2. Android only: pass the app's Google Cloud project number, `new RocalyticsClient({ attest: { cloudProjectNumber: "123456789" } })`. `attest.waitMs` (default 3000) bounds how long the first request waits for a token, and `attest: { disabled: true }` turns attestation off.
+3. The app needs an `attest_apps` row on the API. See the rocalytics-api attest README.
+4. For product analytics, send the token with each batch: `createAnalytics({ ..., headers: (batch) => rocalytics.attestHeaders(batch) })`.
+
+**Nothing is lost without it.** Simulators, emulators, builds without the native module, unsupported devices and a failing attestation send no header and behave exactly as before. A header is sent only when its token matches the request's app, platform and roca id, so a token is never used for another roca id (after `adoptRocaId`, or in a batch holding events from the old id). The client never throws on attestation and waits at most `attest.waitMs`, and only for the first token.
+
 ### API
 
 `new RocalyticsClient(options?)`. Every option is for tests or unusual hosts: `modules` (your own native modules, or `null` to run inert), `fetch`, `baseUrl`, `clock`, `onDiagnostic` (default `console.warn`) and `identifyOnStart`. Two are for ad attribution: `installPing` and `attributionBaseUrl`.
@@ -447,6 +467,7 @@ export const analytics = createAnalytics({
   appId: Application.applicationId!,           // must be on the ingest's allowlist
   platform: Platform.OS === "ios" ? "ios" : "android",
   rocaId: () => rocalytics.rocaId,              // events tracked before it resolves are kept
+  headers: (batch) => rocalytics.attestHeaders(batch), // optional: the attest token, see Attestation
   context: { appVersion: Application.nativeApplicationVersion, osVersion: String(Platform.Version) },
   storage: AsyncStorage,                        // unsent events survive a kill
   getRandomValues,                              // Hermes has no crypto global: else event ids use Math.random
