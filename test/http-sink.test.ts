@@ -85,9 +85,9 @@ describe("createHttpSink", () => {
     ]);
   });
 
-  it("a headers function that throws is transient, not a throw", async () => {
+  it("a headers function that throws sends the payload without them, not a throw", async () => {
     const url = await serve(reply(200, '{"outcome":"accepted"}'));
     const sink = createHttpSink({ url, headers: () => { throw new Error("no token"); } });
-    expect((await sink.send({})).outcome).toBe("transient");
+    expect((await sink.send({})).outcome).toBe("accepted");
   });
 });

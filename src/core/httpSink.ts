@@ -5,8 +5,12 @@ type Headers = Record<string, string>;
 export interface HttpSinkOptions {
   /** The collector endpoint. Each payload is POSTed to it as JSON. */
   url: string;
-  /** Extra request headers, such as an authorization token. A function is called for every send. */
-  headers?: Headers | (() => Headers | Promise<Headers>);
+  /**
+   * Extra request headers, such as an authorization token. A function is
+   * called for every send attempt with that attempt's payload; if it throws
+   * or rejects, the payload is sent without these headers.
+   */
+  headers?: Headers | ((payload: unknown) => Headers | Promise<Headers>);
   /** Defaults to the global `fetch`. */
   fetch?: (url: string, init: { method: string; headers: Headers; body: string; signal?: unknown }) => Promise<{
     text(): Promise<string>;
@@ -39,7 +43,12 @@ export function createHttpSink(options: HttpSinkOptions): Sink<unknown> {
       const controller = Abort ? new Abort() : null;
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        const extra = typeof options.headers === "function" ? await options.headers() : options.headers;
+        let extra: Headers | undefined;
+        try {
+          extra = typeof options.headers === "function" ? await options.headers(payload) : options.headers;
+        } catch {
+          extra = undefined;
+        }
         const request = doFetch(options.url, {
           method: "POST",
           headers: { ...extra, "content-type": "application/json" },

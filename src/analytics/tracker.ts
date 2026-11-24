@@ -23,6 +23,8 @@ export interface AnalyticsConfig {
   /** The ingest's batch URL. Default `ROCALYTICS_INGEST_URL`. Ignored when `sink` is given. */
   endpoint?: string;
   sink?: Sink<EventBatch>;
+  /** Extra headers per batch, e.g. `(batch) => client.attestHeaders(batch)`. Ignored when `sink` is given. A function that throws sends the batch without them. */
+  headers?: (batch: EventBatch) => Record<string, string> | Promise<Record<string, string>>;
   /**
    * The device's `roca_id`, e.g. `() => client.rocaId`. Read when an event is
    * tracked and again at send, so events tracked before it resolves are kept
@@ -94,7 +96,10 @@ export function createAnalytics(config: AnalyticsConfig): Analytics {
   const uuid = config.uuid ?? createUuid(clock, config.getRandomValues);
   const report = safeDiagnostics(config.onDiagnostic);
   const sink: Sink<EventBatch> =
-    config.sink ?? (createHttpSink({ url: config.endpoint ?? ROCALYTICS_INGEST_URL }) as Sink<EventBatch>);
+    config.sink ?? (createHttpSink({
+        url: config.endpoint ?? ROCALYTICS_INGEST_URL,
+        headers: config.headers ? (p) => config.headers!(p as EventBatch) : undefined,
+      }) as Sink<EventBatch>);
   const flushAt = Math.max(1, Math.min(config.flushAt ?? 50, MAX_BATCH));
   const intervalMs = config.flushIntervalMs ?? 15_000;
   const maxQueue = Math.max(flushAt, config.maxQueue ?? 1000);
