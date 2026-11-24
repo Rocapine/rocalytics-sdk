@@ -38,7 +38,10 @@ export interface ApplicationModule {
   getInstallationTimeAsync(): Promise<Date>;
 }
 
-/** The RocaAttest native module (from the optional attest package). Never required as a package: probed by name. */
+/**
+ * The RocaAttest native module (from the optional attest package). Never required as a package: probed by name.
+ * Must stay identical to `AttestNativeModule` in native/attest/src/index.ts.
+ */
 export interface AttestNativeModule {
   isSupported(): Promise<boolean>;
   // iOS

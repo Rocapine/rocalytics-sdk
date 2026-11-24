@@ -68,3 +68,5 @@ npm test        # config plugin tests (node --test)
 ## Publishing
 
 Bump `version` in `package.json`, then publish a GitHub release tagged `attest-v<version>` (e.g. `attest-v0.1.0`). `.github/workflows/publish-attest.yml` checks the tag against the version, builds (`prepack`) and publishes with npm trusted publishing; the SDK's own `publish.yml` skips `attest-v*` releases.
+
+Trusted publishing is configured on npmjs.com for `@rocapine/rocalytics-attest`: repository `Rocapine/rocalytics-sdk`, workflow `publish-attest.yml`, environment `npm`. Renaming the workflow file or the environment breaks it. If npm requires the package to exist before a trusted publisher can be added, the very first publish (0.1.0) is done by hand (`npm publish` from `native/attest`, logged in to npm), and the workflow publishes every version after it.

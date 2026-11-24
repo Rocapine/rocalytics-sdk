@@ -383,9 +383,9 @@ The client can prove to rocalytics-api that its requests come from the genuine a
    Use `"development"` for a development build. Rebuild the app: the module is native.
 2. Android only: pass the app's Google Cloud project number, `new RocalyticsClient({ attest: { cloudProjectNumber: "123456789" } })`. `attest.waitMs` (default 3000) bounds how long the first request waits for a token, and `attest: { disabled: true }` turns attestation off.
 3. The app needs an `attest_apps` row on the API. See the rocalytics-api attest README.
-4. For product analytics, send the token with each batch: `createAnalytics({ ..., headers: (batch) => rocalytics.attestHeaders(batch) })`.
+4. For product analytics, send the token with each batch: `createAnalytics({ ..., headers: (batch) => rocalytics.attestHeaders(batch) })`. `createAnalytics`'s `appId` must equal the native application id (iOS bundle id, Android package name), or its batches get no header.
 
-**Nothing is lost without it.** Simulators, emulators, builds without the native module, unsupported devices and a failing attestation send no header and behave exactly as before. A header is sent only when its token matches the request's app, platform and roca id, so a token is never used for another roca id (after `adoptRocaId`, or in a batch holding events from the old id). The client never throws on attestation and waits at most `attest.waitMs`, and only for the first token.
+**Nothing is lost without it.** Simulators, emulators, builds without the native module, unsupported devices and a failing attestation send no header and behave exactly as before. A header is sent only when its token matches the request's app, platform and roca id, so a token is never used for another roca id (after `adoptRocaId`, or in a batch holding events from the old id). The client never throws on attestation. A request (and `attestHeaders`, start-up included) waits at most `attest.waitMs`, and only while no token is cached; once one request has given up on a pending attestation, the next ones do not wait for it. An attestation still unfinished after 30 s is dropped, reported as an `attest-timeout` diagnostic, and retried after a backoff.
 
 ### API
 
