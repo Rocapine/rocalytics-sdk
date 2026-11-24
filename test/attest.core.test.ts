@@ -38,7 +38,7 @@ describe("classifyProviderError", () => {
     ["E_DC_3", "new_key"],
     ["E_DC_4", "backoff"], ["E_DC_0", "backoff"], ["E_PI_NETWORK_ERROR", "backoff"], ["E_PI_TOO_MANY_REQUESTS", "backoff"],
     ["E_PI_CLIENT_TRANSIENT_ERROR", "backoff"], ["E_PI_CANNOT_BIND_TO_SERVICE", "backoff"],
-    ["E_PI_CLOUD_PROJECT_NUMBER_IS_INVALID", "config"], ["E_DC_2", "config"],
+    ["E_PI_CLOUD_PROJECT_NUMBER_IS_INVALID", "config"], ["E_DC_2", "config"], ["E_PI_REQUEST_HASH_TOO_LONG", "config"],
     ["E_SOMETHING", "rejected"], [undefined, "rejected"],
   ])("%s → %s", (code, action) => expect(classifyProviderError(err(code))).toBe(action));
 });

@@ -146,8 +146,7 @@ describe("RocalyticsClient attestation", () => {
     await time.advance(499);
     expect(api()).toEqual([]);
     await time.advance(1);
-    expect(api().map((r) => new URL(r.url).pathname)).toEqual([`${API}identify`]);
-    await time.advance(500); // the install track waits for the same pending attestation, at most waitMs too
+    // identify gave up on the pending attestation, so the install track does not wait for it again
     await client.ready;
     expect(api().map((r) => new URL(r.url).pathname)).toEqual([`${API}identify`, `${API}track`]);
     expect(api().every((r) => auth(r) === undefined)).toBe(true);

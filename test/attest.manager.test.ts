@@ -3,6 +3,7 @@ import {
   createAttestTokenManager,
   ATTEST_TOKEN_KEY,
   BACKOFF_MS,
+  FLIGHT_DEADLINE_MS,
   RENEW_BEFORE_MS,
   type AttestManagerOptions,
   type AttestProvider,
@@ -581,22 +582,100 @@ describe("attest token manager", () => {
     expect(m.state()).toBe("fetching");
     await time.advance(1);
     expect(first).toBeNull();
-    expect(time.pendingTimers).toBe(0);
+    expect(time.pendingTimers).toBe(1); // only the flight's deadline
 
     let second: string | null | undefined;
-    void m.getToken(1000).then((v) => (second = v)); // joins the same flight
-    await time.advance(1000);
-    expect(second).toBeNull();
+    void m.getToken(1000).then((v) => (second = v)); // joins the same flight, which a caller already gave up on
+    await flushMicrotasks();
+    expect(second).toBeNull(); // at once
     expect(calls).toHaveLength(1);
     expect(p.calls.filter((c) => c === "generateKey")).toHaveLength(1);
 
-    hold.resolve("ATT");
+    hold.resolve("ATT"); // lands before FLIGHT_DEADLINE_MS
     await flushMicrotasks();
     expect(calls).toHaveLength(2);
     expect(m.state()).toBe("valid");
     expect(stored().token).toBe(jwt(0));
+    expect(time.pendingTimers).toBe(0);
     expect(await m.getToken()).toBe(jwt(0));
     expect(calls).toHaveLength(2);
+  });
+
+  it("a flight that never settles → backoff after FLIGHT_DEADLINE_MS, then a new flight; the hung flight's late result is ignored", async () => {
+    expect(FLIGHT_DEADLINE_MS).toBe(30_000);
+    const { fetch, calls } = scriptedFetch([challenge("c1"), challenge("c2"), token(jwt(100))]);
+    const p = iosProvider({ storedKeyId: "K9" });
+    const hold = deferred<string>();
+    const generateAssertion = p.generateAssertion;
+    let n = 0;
+    p.generateAssertion = (k, b) => (generateAssertion(k, b), ++n === 1 ? hold.promise : Promise.resolve("ASR"));
+    const m = manager(p, fetch);
+
+    let first: string | null | undefined;
+    void m.getToken(3000).then((v) => (first = v));
+    await time.advance(3000);
+    expect(first).toBeNull();
+    let second: string | null | undefined;
+    void m.getToken(3000).then((v) => (second = v));
+    await flushMicrotasks();
+    expect(second).toBeNull(); // at once, no second 3 s wait
+
+    await time.advance(FLIGHT_DEADLINE_MS - 3000 - 1);
+    expect(m.state()).toBe("fetching");
+    await time.advance(1);
+    expect(m.state()).toBe("backoff");
+    expect(diags).toEqual([{ code: "attest-timeout", message: expect.stringContaining("30 s") }]);
+    expect(time.pendingTimers).toBe(0);
+    expect(await m.getToken()).toBeNull(); // inside the backoff: no request
+    expect(calls).toHaveLength(1);
+
+    await time.advance(BACKOFF_MS[0]);
+    expect(await m.getToken()).toBe(jwt(100)); // a new flight
+    expect(calls).toHaveLength(3);
+    expect(m.state()).toBe("valid");
+
+    hold.resolve("ASR"); // the hung flight lands late
+    await flushMicrotasks();
+    expect(calls).toHaveLength(3); // it sends nothing
+    expect(m.state()).toBe("valid");
+    expect(stored().token).toBe(jwt(100));
+    expect(time.pendingTimers).toBe(0);
+  });
+
+  it("a hung flight's late token is not stored, and does not reset the backoff", async () => {
+    const gate = deferred();
+    const { fetch, calls } = scriptedFetch([challenge("c1"), { ...token(jwt(0)), gate: gate.promise }, challenge("c2"), { status: 503 }]);
+    const m = manager(iosProvider({ storedKeyId: "K9" }), fetch);
+    void m.getToken(100);
+    await time.advance(FLIGHT_DEADLINE_MS);
+    expect(m.state()).toBe("backoff");
+
+    gate.resolve(); // the 200 lands after the deadline
+    await flushMicrotasks();
+    expect(store.dump()[ATTEST_TOKEN_KEY]).toBeUndefined();
+    expect(m.state()).toBe("backoff");
+    expect(await m.getToken()).toBeNull();
+    expect(calls).toHaveLength(2);
+
+    await time.advance(BACKOFF_MS[0]);
+    expect(await m.getToken()).toBeNull(); // 503
+    expect(calls).toHaveLength(4);
+    await time.advance(BACKOFF_MS[0]);
+    expect(m.state()).toBe("backoff"); // the second step (2 min): the late token reset nothing
+    await time.advance(BACKOFF_MS[1] - BACKOFF_MS[0]);
+    expect(m.state()).toBe("idle");
+    expect(time.pendingTimers).toBe(0);
+  });
+
+  it("state() is backoff only inside the backoff window", async () => {
+    const { fetch } = scriptedFetch([challenge("c1"), { status: 503 }]);
+    const m = manager(iosProvider({ storedKeyId: "K9" }), fetch);
+    expect(await m.getToken()).toBeNull();
+    expect(m.state()).toBe("backoff");
+    await time.advance(BACKOFF_MS[0] - 1);
+    expect(m.state()).toBe("backoff");
+    await time.advance(1);
+    expect(m.state()).toBe("idle");
   });
 
   it("Android: prepare(cloudProjectNumber) once, then requestToken; body android_integrity", async () => {
@@ -625,6 +704,17 @@ describe("attest token manager", () => {
     expect(await m.getToken()).toBe(jwt(0));
     expect(calls).toHaveLength(3);
     expect(p.calls).toEqual(["isSupported", "prepare:123", "prepare:123", "requestToken:c2|com.a|r1"]);
+  });
+
+  it("Android: E_PI_INTEGRITY_TOKEN_PROVIDER_INVALID → backoff, and the next flight calls prepare again", async () => {
+    const { fetch } = scriptedFetch([challenge("c1"), challenge("c2"), token(jwt(0))]);
+    const p = androidProvider({ fail: { requestToken: "E_PI_INTEGRITY_TOKEN_PROVIDER_INVALID" } });
+    const m = manager(p, fetch, { cloudProjectNumber: "123" });
+    expect(await m.getToken()).toBeNull();
+    expect(m.state()).toBe("backoff");
+    await time.advance(BACKOFF_MS[0]);
+    expect(await m.getToken()).toBe(jwt(0));
+    expect(p.calls).toEqual(["isSupported", "prepare:123", "requestToken:c1|com.a|r1", "prepare:123", "requestToken:c2|com.a|r1"]);
   });
 
   it("Android without cloudProjectNumber → unsupported, diagnostic attest-config, no request", async () => {

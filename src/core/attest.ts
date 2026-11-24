@@ -100,6 +100,7 @@ const PROVIDER_ERRORS: Record<string, ProviderErrorAction> = {
   E_PI_CLIENT_TRANSIENT_ERROR: "backoff",
   E_PI_CANNOT_BIND_TO_SERVICE: "backoff",
   E_PI_CLOUD_PROJECT_NUMBER_IS_INVALID: "config",
+  E_PI_REQUEST_HASH_TOO_LONG: "config",
 };
 
 export function classifyProviderError(error: unknown): ProviderErrorAction {
@@ -146,8 +147,11 @@ export interface AttestTokenManager {
 export const ATTEST_TOKEN_KEY = "rocalytics.attest.token.v1";
 export const RENEW_BEFORE_MS = 2 * 3600_000;
 export const BACKOFF_MS = [30_000, 120_000, 600_000] as const;
+/** A flight (challenge, native proof, POST) not settled by then counts as a backoff failure; whatever it lands later is ignored. */
+export const FLIGHT_DEADLINE_MS = 30_000;
 
-const DEFAULT_WAIT_MS = 3000;
+/** How long a request waits for a token when `attest.waitMs` is not set. */
+export const DEFAULT_ATTEST_WAIT_MS = 3000;
 /** The API's token lifetime (`exp = iat + 86400`): the bound for a token whose own lifetime can't be read. */
 const MAX_LIFETIME_S = 86400;
 
@@ -161,6 +165,14 @@ interface TokenRecord {
 }
 
 type FlightOutcome = AttestResponseAction | { action: "config"; detail: string };
+
+/** One attestation in progress. `abandoned`: a caller timed out waiting on it, so later callers do not wait. */
+interface Flight {
+  rocaId: string;
+  renewing: boolean;
+  abandoned: boolean;
+  promise: Promise<string | null>;
+}
 
 const describeError = (error: unknown): string => {
   const code = field(error, "code");
@@ -176,7 +188,7 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
 
   let record: TokenRecord | null = null;
   let terminal: "unsupported" | "rejected" | null = null;
-  let flight: { rocaId: string; renewing: boolean; promise: Promise<string | null> } | null = null;
+  let flight: Flight | null = null;
   let backoffUntil: number | null = null;
   let backoffStep = 0;
   let supported: boolean | undefined;
@@ -241,9 +253,15 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
     }
   };
 
-  /** One challenge, one proof, one POST. */
-  const attempt = async (rocaId: string, freshKey: boolean): Promise<FlightOutcome & { expiresAt?: unknown }> => {
+  /**
+   * One challenge, one proof, one POST. Null once `f` is no longer the
+   * current flight (its deadline passed): it then sends and writes nothing more.
+   */
+  const attempt = async (f: Flight, freshKey: boolean): Promise<(FlightOutcome & { expiresAt?: unknown }) | null> => {
+    const live = () => flight === f;
+    const rocaId = f.rocaId;
     const ch = await request("GET", `${attestUrl}/challenge?app_id=${encodeURIComponent(appId)}&platform=${platform}`);
+    if (!live()) return null;
     if (ch.status !== 200) return classifyAttestResponse(ch.status, ch.body);
     const challenge = field(ch.body, "challenge");
     if (typeof challenge !== "string" || challenge === "") return { action: "rejected", detail: "challenge 200 without a challenge" };
@@ -254,26 +272,34 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
     try {
       if (provider.platform === "ios") {
         const keyId = freshKey ? null : await provider.getStoredKeyId();
+        if (!live()) return null;
         if (keyId) {
           body = { kind: "ios_assertion", app_id: appId, roca_id: rocaId, challenge, key_id: keyId, assertion: await provider.generateAssertion(keyId, binding) };
         } else {
           newKeyId = await provider.generateKey();
+          if (!live()) return null;
           body = { kind: "ios_attestation", app_id: appId, roca_id: rocaId, challenge, key_id: newKeyId, attestation: await provider.attestKey(newKeyId, binding) };
         }
       } else {
         if (!prepared) {
           await provider.prepare(options.cloudProjectNumber as string);
+          if (!live()) return null;
           prepared = true;
         }
         body = { kind: "android_integrity", app_id: appId, roca_id: rocaId, challenge, integrity_token: await provider.requestToken(binding) };
       }
     } catch (error) {
+      if (!live()) return null;
+      // Play Integrity asks for a new token provider: the next flight prepares again.
+      if (provider.platform === "android" && field(error, "code") === "E_PI_INTEGRITY_TOKEN_PROVIDER_INVALID") prepared = false;
       const action = classifyProviderError(error);
       return action === "new_key" ? { action } : { action, detail: describeError(error) };
     }
+    if (!live()) return null;
     if (appVersion !== undefined) body.app_version = appVersion;
 
     const res = await request("POST", attestUrl, body);
+    if (!live()) return null;
     const outcome = classifyAttestResponse(res.status, res.body);
     if (outcome.action === "token" && newKeyId !== null && provider.platform === "ios") {
       try {
@@ -281,6 +307,7 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
       } catch {
         // The token is good; the next renewal attests a new key.
       }
+      if (!live()) return null;
     }
     return { ...outcome, expiresAt: field(res.body, "expires_at") };
   };
@@ -309,13 +336,19 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
     return token;
   };
 
-  const fly = async (rocaId: string): Promise<string | null> => {
+  /** Every state write below happens only while `f` is the current flight: a flight past its deadline changes nothing. */
+  const fly = async (f: Flight): Promise<string | null> => {
+    const live = () => flight === f;
+    const rocaId = f.rocaId;
     if (provider.platform === "android" && !options.cloudProjectNumber)
       return stop("unsupported", "attest-config", "Android attestation needs attest.cloudProjectNumber");
     if (supported === undefined) {
       try {
-        supported = await provider.isSupported();
+        const answer = await provider.isSupported();
+        if (!live()) return null;
+        supported = answer;
       } catch (error) {
+        if (!live()) return null;
         const action = classifyProviderError(error);
         if (action === "unsupported") return stop("unsupported", "attest-unsupported", `attestation is not available on this device: ${describeError(error)}`);
         if (action === "config") return stop("unsupported", "attest-config", `attestation is misconfigured: ${describeError(error)}`);
@@ -329,7 +362,8 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
     let newKey = false;
     let freshKey = false;
     for (;;) {
-      const outcome = await attempt(rocaId, freshKey);
+      const outcome = await attempt(f, freshKey);
+      if (!outcome || !live()) return null;
       switch (outcome.action) {
         case "token":
           return accept(outcome.token, outcome.expiresAt, rocaId);
@@ -347,6 +381,7 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
             } catch {
               // freshKey already skips the stored key for this flight.
             }
+            if (!live()) return null;
           }
           break;
         case "unsupported":
@@ -361,15 +396,39 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
     }
   };
 
-  const startFlight = (rocaId: string, renewing: boolean) => {
-    const f = { rocaId, renewing, promise: Promise.resolve<string | null>(null) };
-    f.promise = fly(rocaId)
-      .catch(() => backoff())
+  /**
+   * A flight that has not settled within FLIGHT_DEADLINE_MS (a fetch or a
+   * native call that never answers) counts as a backoff failure: it stops
+   * being the current flight, and whatever it lands later is ignored.
+   */
+  const startFlight = (rocaId: string, renewing: boolean): Flight => {
+    const f: Flight = { rocaId, renewing, abandoned: false, promise: Promise.resolve<string | null>(null) };
+    flight = f;
+    let expire: (value: null) => void = () => {};
+    const expired = new Promise<null>((resolve) => (expire = resolve));
+    let handle: unknown;
+    try {
+      handle = timers.setTimeout(() => {
+        if (flight !== f) return;
+        flight = null;
+        report({ code: "attest-timeout", message: `the attestation did not finish within ${FLIGHT_DEADLINE_MS / 1000} s; it is retried after a backoff` });
+        expire(backoff());
+      }, FLIGHT_DEADLINE_MS);
+    } catch {
+      // no deadline: the flight still settles on its own
+    }
+    const settled = fly(f)
+      .catch(() => (flight === f ? backoff() : null))
       .then((token) => {
+        try {
+          timers.clearTimeout(handle);
+        } catch {
+          // nothing to clear
+        }
         if (flight === f) flight = null;
         return token;
       });
-    flight = f;
+    f.promise = Promise.race([settled, expired]);
     return f;
   };
 
@@ -377,7 +436,8 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
 
   const bound = (token: string, rocaId: string): AttestBinding => ({ token, app_id: appId, platform, roca_id: rocaId });
 
-  const obtain = async (): Promise<AttestBinding | null> => {
+  /** `wait.flight`: the flight this call is waiting on, which its getBinding marks abandoned if it times out first. */
+  const obtain = async (wait: { flight: Flight | null }): Promise<AttestBinding | null> => {
     await load();
     const rocaId = options.getRocaId();
     if (rocaId === null || terminal) return null;
@@ -386,21 +446,27 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
       if (cached.local_expires_at - clock.now() <= RENEW_BEFORE_MS && !flight && !inBackoff()) startFlight(rocaId, true);
       return bound(cached.token, cached.roca_id);
     }
+    // A caller already gave up on this flight: nobody waits on it again.
+    if (flight?.abandoned) return null;
     if (flight && flight.rocaId !== rocaId) {
       // A flight for another roca id: its token is not ours. Wait for it, then decide again.
+      wait.flight = flight;
       await flight.promise;
-      return obtain();
+      wait.flight = null;
+      return obtain(wait);
     }
     const f = flight ?? (inBackoff() ? null : startFlight(rocaId, false));
     if (!f) return null;
+    wait.flight = f;
     const token = await f.promise;
     return token !== null && options.getRocaId() === f.rocaId ? bound(token, f.rocaId) : null;
   };
 
-  const getBinding = (waitMs = DEFAULT_WAIT_MS): Promise<AttestBinding | null> =>
+  const getBinding = (waitMs = DEFAULT_ATTEST_WAIT_MS): Promise<AttestBinding | null> =>
     new Promise<AttestBinding | null>((resolve) => {
       let settled = false;
       let handle: unknown;
+      const wait: { flight: Flight | null } = { flight: null };
       const finish = (value: AttestBinding | null) => {
         if (settled) return;
         settled = true;
@@ -412,8 +478,11 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
         resolve(value);
       };
       try {
-        handle = timers.setTimeout(() => finish(null), waitMs);
-        obtain().then(finish, () => finish(null));
+        handle = timers.setTimeout(() => {
+          if (!settled && wait.flight) wait.flight.abandoned = true;
+          finish(null);
+        }, waitMs);
+        obtain(wait).then(finish, () => finish(null));
       } catch {
         finish(null);
       }
@@ -425,7 +494,7 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
     state() {
       if (terminal) return terminal;
       if (flight) return flight.renewing ? "renewing" : "fetching";
-      if (backoffUntil !== null) return "backoff";
+      if (inBackoff()) return "backoff";
       const rocaId = options.getRocaId();
       return rocaId !== null && usable(rocaId) ? "valid" : "idle";
     },
