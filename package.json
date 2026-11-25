@@ -89,6 +89,7 @@
     "e2e:analytics": "npm run build && node scripts/e2e-analytics.mjs"
   },
   "peerDependencies": {
+    "@expo/app-integrity": "*",
     "expo-application": "*",
     "expo-crypto": "*",
     "expo-device": "*",
@@ -98,6 +99,9 @@
     "react-native": "*"
   },
   "peerDependenciesMeta": {
+    "@expo/app-integrity": {
+      "optional": true
+    },
     "expo-application": {
       "optional": true
     },

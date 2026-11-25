@@ -7,6 +7,11 @@ The format follows Keep a Changelog, and the project follows Semantic Versioning
 Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.0 is released, the entries before it may be truncated from this file.
 
 ## [Unreleased]
+### Changed
+- Attestation runs on `@expo/app-integrity`, now an optional peer dependency, instead of the `@rocapine/rocalytics-attest` package announced in 0.12.0, which is withdrawn and was never published. The client probes the binary for the `ExpoAppIntegrity` native module and never imports the package. Without it the client sends no attestation, as before. Set the App Attest entitlement (`com.apple.developer.devicecheck.appattest-environment`) in `app.json` yourself: there is no config plugin any more. The API contract is unchanged: the binding string is hashed the same way on both platforms (the Play Integrity request hash is now computed in JS with `expo-crypto`). The iOS key id is kept in the secure store.
+- `AttestNativeModule` (`/client`) now describes `@expo/app-integrity`'s functions, and provider errors are classified by its `ERR_APP_INTEGRITY_*` codes.
+### Added
+- `/client`: `requestHashOf(crypto, binding)`, the Play Integrity request hash of a binding string.
 
 ## [0.12.0] - 2026-11-24
 ### Added

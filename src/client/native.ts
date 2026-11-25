@@ -15,11 +15,11 @@
 // not the TurboModule registry, so that probe reports a linked module as
 // missing.
 //
-// The one exception is the attest module (RocaAttest, from the
-// optional attest package): it is used through its native object directly,
+// The one exception is the attest module (ExpoAppIntegrity, from the optional
+// peer `@expo/app-integrity`): it is used through its native object directly,
 // probed by name and never required as a package, so that installing it stays
-// optional and the SDK keeps no dependency on its package. Without it the
-// client simply sends no attestation.
+// optional and an app without it still bundles. Without it the client simply
+// sends no attestation.
 //
 // Every require is a string literal, so a bundler can see it. Metro resolves
 // them at bundle time: an app that imports /client without installing a
@@ -39,26 +39,28 @@ export interface ApplicationModule {
 }
 
 /**
- * The RocaAttest native module (from the optional attest package). Never required as a package: probed by name.
- * Must stay identical to `AttestNativeModule` in native/attest/src/index.ts.
+ * The members of the ExpoAppIntegrity native module (`@expo/app-integrity`) the client uses.
+ * Never required as a package: probed by name. Rejections carry an `ERR_APP_INTEGRITY_*` `code`.
  */
 export interface AttestNativeModule {
-  isSupported(): Promise<boolean>;
-  // iOS
-  generateKey?(): Promise<string>;
-  attestKey?(keyId: string, binding: string): Promise<string>;
-  generateAssertion?(keyId: string, binding: string): Promise<string>;
-  getStoredKeyId?(): Promise<string | null>;
-  setStoredKeyId?(keyId: string | null): Promise<void>;
-  // Android
-  prepare?(cloudProjectNumber: string): Promise<void>;
-  requestToken?(binding: string): Promise<string>;
+  // iOS. `challenge` is hashed by the module: the client data hash is SHA-256 of its UTF-8 bytes.
+  readonly isSupported?: boolean;
+  generateKeyAsync?(): Promise<string>;
+  attestKeyAsync?(keyId: string, challenge: string): Promise<string>;
+  generateAssertionAsync?(keyId: string, challenge: string): Promise<string>;
+  // Android. `requestHash` is passed to Play Integrity as is.
+  prepareIntegrityTokenProviderAsync?(cloudProjectNumber: string): Promise<void>;
+  requestIntegrityCheckAsync?(requestHash: string): Promise<string>;
 }
 
 /** The native capabilities the client uses, shaped like the Expo modules and react-native, which fit as they are. */
 export interface RocalyticsModules {
   application: ApplicationModule;
-  crypto: { randomUUID(): string };
+  crypto: {
+    randomUUID(): string;
+    /** expo-crypto's digest; the client passes "SHA-256" and { encoding: "base64" }. */
+    digestStringAsync(algorithm: string, data: string, options?: { encoding: string }): Promise<string>;
+  };
   device: {
     readonly brand: string | null;
     readonly modelName: string | null;
@@ -75,7 +77,7 @@ export interface RocalyticsModules {
   platform: { readonly OS: string; readonly Version: string | number };
   /** react-native's `Dimensions`. */
   dimensions: { get(dim: "screen"): { width: number; height: number; scale: number } };
-  /** The RocaAttest native module, or null when the binary does not have it. */
+  /** The ExpoAppIntegrity native module, or null when the binary does not have it. */
   attest?: AttestNativeModule | null;
 }
 
@@ -117,7 +119,7 @@ export function loadExpoModules(loaders: ExpoModuleLoaders = DEFAULT_LOADERS): L
     if (missing) return { ok: false, reason: `native module ${missing} is not in this binary` };
     let attest: AttestNativeModule | null = null;
     try {
-      attest = (core.requireOptionalNativeModule("RocaAttest") as AttestNativeModule | null | undefined) ?? null;
+      attest = (core.requireOptionalNativeModule("ExpoAppIntegrity") as AttestNativeModule | null | undefined) ?? null;
     } catch {
       attest = null;
     }

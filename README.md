@@ -308,10 +308,11 @@ A purchase without its platform's join key still counts as a conversion; it earn
 
 ### Peer dependencies
 
-The client talks to these modules. They are optional peers, so an app that does not import `/client` needs none of them. An app that does must install all of them, which an Expo app usually already has, or gets with `npx expo install expo-application expo-crypto expo-device expo-network expo-secure-store`:
+The client talks to these modules. They are optional peers, so an app that does not import `/client` needs none of them. An app that does must install all of them except `@expo/app-integrity`, which only [attestation](#attestation) needs. An Expo app usually already has them, or gets them with `npx expo install expo-application expo-crypto expo-device expo-network expo-secure-store`:
 
 | Package | Range |
 |---|---|
+| `@expo/app-integrity` | `*` |
 | `expo-application` | `*` |
 | `expo-crypto` | `*` |
 | `expo-device` | `*` |
@@ -368,19 +369,19 @@ export function setUpOnboardingTracking(storage: KeyValueStorage, context: () =>
 ```
 
 ### Attestation
-The client can prove to rocalytics-api that its requests come from the genuine app (iOS App Attest, Android Play Integrity). The proof is a short-lived token sent as `Authorization: Bearer <token>` on the client's requests. It is optional and off until the app ships the native module.
+The client can prove to rocalytics-api that its requests come from the genuine app (iOS App Attest, Android Play Integrity). The proof is a short-lived token sent as `Authorization: Bearer <token>` on the client's requests. It is optional and off until the app ships `@expo/app-integrity`.
 
-1. Install the native package, which is separate from this one and not a peer of it, and add its config plugin:
+1. Install `@expo/app-integrity`, an optional peer of this package, and give the iOS app the App Attest entitlement in `app.json`:
 
    ```sh
-   npx expo install @rocapine/rocalytics-attest
+   npx expo install @expo/app-integrity
    ```
 
    ```json
-   ["@rocapine/rocalytics-attest", { "appAttestEnvironment": "production" }]
+   "ios": { "entitlements": { "com.apple.developer.devicecheck.appattest-environment": "production" } }
    ```
 
-   Use `"development"` for a development build. Rebuild the app: the module is native.
+   Use `"development"` for a development build that should use Apple's development App Attest environment (TestFlight and App Store builds always use production). Enable the App Attest capability on the bundle id in the Apple Developer portal and regenerate the provisioning profiles. Rebuild the app: the module is native. The client never imports the package; it probes the binary for its native module (`ExpoAppIntegrity`), so a JS update reaching an older build without it sends no attestation instead of crashing.
 2. Android only: pass the app's Google Cloud project number, `new RocalyticsClient({ attest: { cloudProjectNumber: "123456789" } })`. `attest.waitMs` (default 3000) bounds how long the first request waits for a token, and `attest: { disabled: true }` turns attestation off.
 3. The app needs an `attest_apps` row on the API. See the rocalytics-api attest README.
 4. For product analytics, send the token with each batch: `createAnalytics({ ..., headers: (batch) => rocalytics.attestHeaders(batch) })`. `createAnalytics`'s `appId` must equal the native application id (iOS bundle id, Android package name), or its batches get no header.

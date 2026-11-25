@@ -1,6 +1,7 @@
 // Stand-ins for the Expo modules, react-native and fetch, for the Rocalytics
 // client tests. The device shape is the one the fixture capture script uses,
 // so a captured scenario can be replayed against the packaged client as is.
+import { createHash } from "node:crypto";
 import type { AttestNativeModule, FetchLike, RocalyticsModules } from "../src/client";
 
 export interface FakeDevice {
@@ -87,7 +88,10 @@ export function fakeModules(device: FakeDevice, store: FakeSecureStore): Rocalyt
       getAndroidId: () => device.androidId as string,
       getInstallationTimeAsync: async () => new Date(device.installTime),
     },
-    crypto: { randomUUID: () => device.uuid },
+    crypto: {
+      randomUUID: () => device.uuid,
+      digestStringAsync: async (_algorithm: string, data: string) => createHash("sha256").update(data, "utf8").digest("base64"),
+    },
     device: {
       brand: device.brand,
       modelName: device.modelName,
@@ -150,19 +154,16 @@ export const attestJwt = (rocaId: string, n = 0) =>
 /** The roca id an `attestJwt` token is bound to. */
 export const attestJwtRocaId = (token: string): unknown => (JSON.parse(Buffer.from(token.split(".")[1] as string, "base64url").toString()) as { roca_id?: unknown }).roca_id;
 
-/** A RocaAttest stand-in with both platforms' functions; records every call. */
+/** An ExpoAppIntegrity stand-in with both platforms' functions; records every call. */
 export function fakeAttestModule(o: { supported?: boolean } = {}) {
   const calls: string[] = [];
-  let stored: string | null = null;
   const module: AttestNativeModule = {
-    isSupported: async () => (calls.push("isSupported"), o.supported ?? true),
-    generateKey: async () => (calls.push("generateKey"), "K1"),
-    attestKey: async (k, b) => (calls.push(`attestKey:${k}:${b}`), "ATT"),
-    generateAssertion: async (k, b) => (calls.push(`generateAssertion:${k}:${b}`), "ASR"),
-    getStoredKeyId: async () => stored,
-    setStoredKeyId: async (k) => void (stored = k),
-    prepare: async (n) => void calls.push(`prepare:${n}`),
-    requestToken: async (b) => (calls.push(`requestToken:${b}`), "INT"),
+    isSupported: o.supported ?? true,
+    generateKeyAsync: async () => (calls.push("generateKey"), "K1"),
+    attestKeyAsync: async (k, b) => (calls.push(`attestKey:${k}:${b}`), "ATT"),
+    generateAssertionAsync: async (k, b) => (calls.push(`generateAssertion:${k}:${b}`), "ASR"),
+    prepareIntegrityTokenProviderAsync: async (n) => void calls.push(`prepare:${n}`),
+    requestIntegrityCheckAsync: async (h) => (calls.push(`requestToken:${h}`), "INT"),
   };
   return { module, calls };
 }

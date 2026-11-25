@@ -18,9 +18,6 @@ concurrency:
 
 jobs:
   publish:
-    # attest-v* releases are @rocapine/rocalytics-attest's (publish-attest.yml).
-    # Skipping here also skips notify-roca-chandler, which needs this job.
-    if: ${{ !startsWith(github.event.release.tag_name, 'attest-v') }}
     runs-on: ubuntu-latest
     environment: npm
     steps:

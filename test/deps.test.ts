@@ -12,8 +12,9 @@ import { describe, expect, it } from "vitest";
 const ROOT = path.join(__dirname, "..");
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
 
-/** The only packages /client may load, all optional peers. */
+/** The /client optional peers. All but @expo/app-integrity are loaded; that one is only probed by its native module name. */
 const ROCALYTICS_PEERS = [
+  "@expo/app-integrity",
   "expo-application",
   "expo-crypto",
   "expo-device",
@@ -73,7 +74,7 @@ describe("dependencies", () => {
       if (rel !== path.join("src", "client", "native.ts")) expect(reqs, rel).toEqual([]);
       required.push(...reqs);
     }
-    expect([...new Set(required)].sort()).toEqual(ROCALYTICS_PEERS);
+    expect([...new Set(required)].sort()).toEqual(ROCALYTICS_PEERS.filter((name) => name !== "@expo/app-integrity"));
   });
 
   it("the tracking module never imports from /client or a remote-control subpath", () => {

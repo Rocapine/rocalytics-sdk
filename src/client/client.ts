@@ -88,8 +88,8 @@ export interface RocalyticsClientOptions {
   /** Defaults to `https://track.rocapi.ne`. */
   attributionBaseUrl?: string;
   /**
-   * App attestation, used when the binary has the RocaAttest module (the
-   * optional attest package) on iOS or Android. The client then attests the
+   * App attestation, used when the binary has `@expo/app-integrity` (an
+   * optional peer dependency) on iOS or Android. The client then attests the
    * app once, caches the token in the secure store, and sends it as
    * `Authorization: Bearer <token>` on its rocalytics-api requests (not on
    * the attribution ping). A request waits at most `waitMs`, and only while
@@ -429,13 +429,14 @@ export class RocalyticsClient {
     }
   }
 
-  /** The attest token manager, when attestation is on and possible: RocaAttest in the binary, iOS or Android, an app id. */
+  /** The attest token manager, when attestation is on and possible: ExpoAppIntegrity in the binary, iOS or Android, an app id. */
   private createAttest(native: RocalyticsModules): AttestTokenManager | null {
     const options = this.options.attest;
     const appId = native.application.applicationId;
     if (options?.disabled === true || !native.attest || !appId) return null;
     try {
-      const provider = toAttestProvider(native.attest, native.platform.OS);
+      const storage = secureStoreStorage(native.secureStore);
+      const provider = toAttestProvider(native.attest, native.platform.OS, { storage, crypto: native.crypto });
       if (!provider) return null;
       return createAttestTokenManager({
         provider,
@@ -447,7 +448,7 @@ export class RocalyticsClient {
           // FetchLike is typed POST-only; the manager also GETs the challenge.
           return fetch ? fetch(url, init as RocalyticsRequest["init"]) : Promise.reject(new Error("no fetch available"));
         },
-        storage: secureStoreStorage(native.secureStore),
+        storage,
         clock: this.clock,
         timers: this.options.timers ?? systemTimers,
         appVersion: native.application.nativeApplicationVersion,

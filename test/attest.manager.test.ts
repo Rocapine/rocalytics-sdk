@@ -507,9 +507,9 @@ describe("attest token manager", () => {
     expect(calls).toHaveLength(8);
   });
 
-  it("E_DC_3 invalidKey from generateAssertion → keyId cleared, new key attested once", async () => {
+  it("ERR_APP_INTEGRITY_INVALID_KEY invalidKey from generateAssertion → keyId cleared, new key attested once", async () => {
     const { fetch, calls } = scriptedFetch([challenge("c1"), challenge("c2"), token(jwt(0))]);
-    const p = iosProvider({ storedKeyId: "K9", fail: { generateAssertion: "E_DC_3" } });
+    const p = iosProvider({ storedKeyId: "K9", fail: { generateAssertion: "ERR_APP_INTEGRITY_INVALID_KEY" } });
     const m = manager(p, fetch);
     expect(await m.getToken()).toBe(jwt(0));
     expect(calls.map((c) => c.url)).toEqual([CHALLENGE_URL, CHALLENGE_URL, URL_]);
@@ -518,7 +518,7 @@ describe("attest token manager", () => {
 
     // The new key invalid too → backoff, not a loop.
     const s2 = scriptedFetch([challenge("c1"), challenge("c2")]);
-    const p2 = iosProvider({ storedKeyId: "K9", fail: { generateAssertion: "E_DC_3", attestKey: "E_DC_3" } });
+    const p2 = iosProvider({ storedKeyId: "K9", fail: { generateAssertion: "ERR_APP_INTEGRITY_INVALID_KEY", attestKey: "ERR_APP_INTEGRITY_INVALID_KEY" } });
     const m2 = manager(p2, s2.fetch, { storage: memoryStorage() });
     expect(await m2.getToken()).toBeNull();
     expect(s2.calls).toHaveLength(2);
@@ -526,8 +526,8 @@ describe("attest token manager", () => {
     expect(m2.state()).toBe("backoff");
   });
 
-  it("E_DC_1 / isSupported false → unsupported with no request", async () => {
-    for (const p of [iosProvider({ supported: false }), iosProvider({ fail: { isSupported: "E_DC_1" } })]) {
+  it("ERR_APP_INTEGRITY_FEATURE_UNSUPPORTED / isSupported false → unsupported with no request", async () => {
+    for (const p of [iosProvider({ supported: false }), iosProvider({ fail: { isSupported: "ERR_APP_INTEGRITY_FEATURE_UNSUPPORTED" } })]) {
       diags = [];
       const { fetch, calls } = scriptedFetch([]);
       const m = manager(p, fetch);
@@ -539,18 +539,18 @@ describe("attest token manager", () => {
       expect(await m.getToken()).toBeNull();
       expect(p.calls).toEqual(["isSupported"]);
     }
-    // E_DC_1 from generateKey: unsupported after the challenge, no POST.
+    // ERR_APP_INTEGRITY_FEATURE_UNSUPPORTED from generateKey: unsupported after the challenge, no POST.
     const { fetch, calls } = scriptedFetch([challenge("c1")]);
-    const p = iosProvider({ fail: { generateKey: "E_DC_1" } });
+    const p = iosProvider({ fail: { generateKey: "ERR_APP_INTEGRITY_FEATURE_UNSUPPORTED" } });
     const m = manager(p, fetch);
     expect(await m.getToken()).toBeNull();
     expect(calls).toHaveLength(1);
     expect(m.state()).toBe("unsupported");
   });
 
-  it("E_DC_4 → backoff", async () => {
+  it("ERR_APP_INTEGRITY_SERVER_UNAVAILABLE → backoff", async () => {
     const { fetch, calls } = scriptedFetch([challenge("c1")]);
-    const p = iosProvider({ fail: { attestKey: "E_DC_4" } });
+    const p = iosProvider({ fail: { attestKey: "ERR_APP_INTEGRITY_SERVER_UNAVAILABLE" } });
     const m = manager(p, fetch);
     expect(await m.getToken()).toBeNull();
     expect(calls).toEqual([{ url: CHALLENGE_URL, init: GET }]);
@@ -561,10 +561,10 @@ describe("attest token manager", () => {
 
   it("an unknown provider error → rejected with its code", async () => {
     const { fetch } = scriptedFetch([challenge("c1")]);
-    const m = manager(iosProvider({ fail: { generateKey: "E_ATTEST_UNKNOWN" } }), fetch);
+    const m = manager(iosProvider({ fail: { generateKey: "ERR_APP_INTEGRITY_UNKNOWN" } }), fetch);
     expect(await m.getToken()).toBeNull();
     expect(m.state()).toBe("rejected");
-    expect(diags).toEqual([{ code: "attest-rejected", message: expect.stringContaining("E_ATTEST_UNKNOWN") }]);
+    expect(diags).toEqual([{ code: "attest-rejected", message: expect.stringContaining("ERR_APP_INTEGRITY_UNKNOWN") }]);
   });
 
   it("a provider that never resolves → getToken(3000) is null after 3 s; the token is returned by a later call once it lands", async () => {
@@ -696,7 +696,7 @@ describe("attest token manager", () => {
 
   it("Android: a prepare that fails transiently is retried on the next flight", async () => {
     const { fetch, calls } = scriptedFetch([challenge("c1"), challenge("c2"), token(jwt(0))]);
-    const p = androidProvider({ fail: { prepare: "E_PI_CLIENT_TRANSIENT_ERROR" } });
+    const p = androidProvider({ fail: { prepare: "ERR_APP_INTEGRITY_CLIENT_TRANSIENT_ERROR" } });
     const m = manager(p, fetch, { cloudProjectNumber: "123" });
     expect(await m.getToken()).toBeNull();
     expect(m.state()).toBe("backoff");
@@ -706,9 +706,20 @@ describe("attest token manager", () => {
     expect(p.calls).toEqual(["isSupported", "prepare:123", "prepare:123", "requestToken:c2|com.a|r1"]);
   });
 
-  it("Android: E_PI_INTEGRITY_TOKEN_PROVIDER_INVALID → backoff, and the next flight calls prepare again", async () => {
+  it("Android: ERR_APP_INTEGRITY_PROVIDER_INVALID → backoff, and the next flight calls prepare again", async () => {
     const { fetch } = scriptedFetch([challenge("c1"), challenge("c2"), token(jwt(0))]);
-    const p = androidProvider({ fail: { requestToken: "E_PI_INTEGRITY_TOKEN_PROVIDER_INVALID" } });
+    const p = androidProvider({ fail: { requestToken: "ERR_APP_INTEGRITY_PROVIDER_INVALID" } });
+    const m = manager(p, fetch, { cloudProjectNumber: "123" });
+    expect(await m.getToken()).toBeNull();
+    expect(m.state()).toBe("backoff");
+    await time.advance(BACKOFF_MS[0]);
+    expect(await m.getToken()).toBe(jwt(0));
+    expect(p.calls).toEqual(["isSupported", "prepare:123", "requestToken:c1|com.a|r1", "prepare:123", "requestToken:c2|com.a|r1"]);
+  });
+
+  it("Android: ERR_APP_INTEGRITY_PROVIDER_NOT_PREPARED → backoff, and the next flight calls prepare again", async () => {
+    const { fetch } = scriptedFetch([challenge("c1"), challenge("c2"), token(jwt(0))]);
+    const p = androidProvider({ fail: { requestToken: "ERR_APP_INTEGRITY_PROVIDER_NOT_PREPARED" } });
     const m = manager(p, fetch, { cloudProjectNumber: "123" });
     expect(await m.getToken()).toBeNull();
     expect(m.state()).toBe("backoff");
@@ -728,15 +739,15 @@ describe("attest token manager", () => {
     expect(diags).toEqual([{ code: "attest-config", message: expect.stringContaining("cloudProjectNumber") }]);
   });
 
-  it("E_PI_CLOUD_PROJECT_NUMBER_IS_INVALID → unsupported with attest-config", async () => {
+  it("ERR_APP_INTEGRITY_INVALID_PROJECT_NUMBER → unsupported with attest-config", async () => {
     const { fetch, calls } = scriptedFetch([challenge("c1")]);
-    const p = androidProvider({ fail: { prepare: "E_PI_CLOUD_PROJECT_NUMBER_IS_INVALID" } });
+    const p = androidProvider({ fail: { prepare: "ERR_APP_INTEGRITY_INVALID_PROJECT_NUMBER" } });
     const m = manager(p, fetch, { cloudProjectNumber: "999" });
     expect(await m.getToken()).toBeNull();
     expect(calls).toHaveLength(1);
     expect(p.calls).toEqual(["isSupported", "prepare:999"]);
     expect(m.state()).toBe("unsupported");
-    expect(diags).toEqual([{ code: "attest-config", message: expect.stringContaining("E_PI_CLOUD_PROJECT_NUMBER_IS_INVALID") }]);
+    expect(diags).toEqual([{ code: "attest-config", message: expect.stringContaining("ERR_APP_INTEGRITY_INVALID_PROJECT_NUMBER") }]);
     expect(await m.getToken()).toBeNull();
     expect(calls).toHaveLength(1);
   });

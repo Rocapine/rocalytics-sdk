@@ -6,12 +6,12 @@ import { safeDiagnostics, type DiagnosticHandler } from "./diagnostics";
 import type { KeyValueStorage } from "./storage";
 import type { Clock, Timers } from "./time";
 
-/** The string the native module hashes (SHA-256 of its UTF-8 bytes) to bind a proof to one challenge, app and install. */
+/** The string a proof is bound to (one challenge, app and install): its SHA-256 is the App Attest client data hash and, base64url, the Play Integrity request hash. */
 export const bindingString = (challenge: string, appId: string, rocaId: string): string => `${challenge}|${appId}|${rocaId}`;
 
 export type AttestPlatform = "ios" | "android";
 
-/** What the native module gives the manager. Every function rejects with an Error whose `code` is `E_DC_<n>`, `E_PI_<NAME>` or `E_ATTEST_UNKNOWN`. */
+/** What the native module gives the manager. Every function rejects with an Error whose `code` is one of `@expo/app-integrity`'s `ERR_APP_INTEGRITY_*`. */
 export type AttestProvider =
   | {
       platform: "ios";
@@ -79,28 +79,29 @@ export function classifyAttestResponse(status: number, body: unknown): AttestRes
 export type ProviderErrorAction = "unsupported" | "new_key" | "backoff" | "config" | "rejected";
 
 const PROVIDER_ERRORS: Record<string, ProviderErrorAction> = {
-  // DCError.Code: unknownSystemFailure 0, featureUnsupported 1, invalidInput 2, invalidKey 3, serverUnavailable 4.
-  E_DC_0: "backoff",
-  E_DC_1: "unsupported",
-  E_DC_2: "config",
-  E_DC_3: "new_key",
-  E_DC_4: "backoff",
-  // StandardIntegrityErrorCode.
-  E_PI_API_NOT_AVAILABLE: "unsupported",
-  E_PI_PLAY_STORE_NOT_FOUND: "unsupported",
-  E_PI_PLAY_SERVICES_NOT_FOUND: "unsupported",
-  E_PI_PLAY_STORE_ACCOUNT_NOT_FOUND: "unsupported",
-  E_PI_PLAY_SERVICES_VERSION_OUTDATED: "unsupported",
-  E_PI_PLAY_STORE_VERSION_OUTDATED: "unsupported",
-  E_PI_NETWORK_ERROR: "backoff",
-  E_PI_GOOGLE_SERVER_UNAVAILABLE: "backoff",
-  E_PI_TOO_MANY_REQUESTS: "backoff",
-  E_PI_INTERNAL_ERROR: "backoff",
-  E_PI_INTEGRITY_TOKEN_PROVIDER_INVALID: "backoff", // the module already retried once
-  E_PI_CLIENT_TRANSIENT_ERROR: "backoff",
-  E_PI_CANNOT_BIND_TO_SERVICE: "backoff",
-  E_PI_CLOUD_PROJECT_NUMBER_IS_INVALID: "config",
-  E_PI_REQUEST_HASH_TOO_LONG: "config",
+  // @expo/app-integrity's codes. iOS (DCError): featureUnsupported, invalidInput, invalidKey, serverUnavailable, unknownSystemFailure.
+  ERR_APP_INTEGRITY_FEATURE_UNSUPPORTED: "unsupported",
+  ERR_APP_INTEGRITY_INVALID_INPUT: "config",
+  ERR_APP_INTEGRITY_INVALID_KEY: "new_key",
+  ERR_APP_INTEGRITY_SERVER_UNAVAILABLE: "backoff",
+  ERR_APP_INTEGRITY_SYSTEM_FAILURE: "backoff",
+  // Android (StandardIntegrityErrorCode).
+  ERR_APP_INTEGRITY_API_NOT_AVAILABLE: "unsupported",
+  ERR_APP_INTEGRITY_PLAY_STORE_NOT_FOUND: "unsupported",
+  ERR_APP_INTEGRITY_PLAY_SERVICES_NOT_FOUND: "unsupported",
+  ERR_APP_INTEGRITY_PLAY_SERVICES_OUTDATED: "unsupported",
+  ERR_APP_INTEGRITY_PLAY_STORE_OUTDATED: "unsupported",
+  ERR_APP_INTEGRITY_NETWORK_ERROR: "backoff",
+  ERR_APP_INTEGRITY_GOOGLE_SERVER_UNAVAILABLE: "backoff",
+  ERR_APP_INTEGRITY_TOO_MANY_REQUESTS: "backoff",
+  ERR_APP_INTEGRITY_INTERNAL_ERROR: "backoff",
+  ERR_APP_INTEGRITY_PROVIDER_INVALID: "backoff", // the provider already retried once
+  ERR_APP_INTEGRITY_PROVIDER_NOT_PREPARED: "backoff",
+  ERR_APP_INTEGRITY_CLIENT_TRANSIENT_ERROR: "backoff",
+  ERR_APP_INTEGRITY_CANNOT_BIND_SERVICE: "backoff",
+  ERR_APP_INTEGRITY_CANCELLED: "backoff",
+  ERR_APP_INTEGRITY_INVALID_PROJECT_NUMBER: "config",
+  ERR_APP_INTEGRITY_REQUEST_HASH_TOO_LONG: "config",
 };
 
 export function classifyProviderError(error: unknown): ProviderErrorAction {
@@ -291,7 +292,8 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
     } catch (error) {
       if (!live()) return null;
       // Play Integrity asks for a new token provider: the next flight prepares again.
-      if (provider.platform === "android" && field(error, "code") === "E_PI_INTEGRITY_TOKEN_PROVIDER_INVALID") prepared = false;
+      const errorCode = field(error, "code");
+      if (provider.platform === "android" && (errorCode === "ERR_APP_INTEGRITY_PROVIDER_INVALID" || errorCode === "ERR_APP_INTEGRITY_PROVIDER_NOT_PREPARED")) prepared = false;
       const action = classifyProviderError(error);
       return action === "new_key" ? { action } : { action, detail: describeError(error) };
     }
