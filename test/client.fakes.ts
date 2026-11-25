@@ -1,7 +1,7 @@
 // Stand-ins for the Expo modules, react-native and fetch, for the Rocalytics
 // client tests. The device shape is the one the fixture capture script uses,
 // so a captured scenario can be replayed against the packaged client as is.
-import type { FetchLike, RocalyticsModules } from "../src/client";
+import type { AttestNativeModule, FetchLike, RocalyticsModules } from "../src/client";
 
 export interface FakeDevice {
   platform: "ios" | "android";
@@ -109,13 +109,22 @@ export interface CapturedRequest {
   body: unknown;
 }
 
-/** A fetch that records each request and answers from `respond` (by path), defaulting to the API's success codes. */
-export function recordingFetch(respond: Record<string, { status: number; json?: unknown }> = {}) {
+type Reply = { status: number; json?: unknown };
+
+/**
+ * A fetch that records each request and answers from `respond` (by path), defaulting to the API's success codes.
+ * `handle`, when given, answers first; returning undefined falls through to `respond`.
+ */
+export function recordingFetch(
+  respond: Record<string, Reply> = {},
+  handle?: (path: string, request: CapturedRequest) => Reply | undefined | Promise<Reply | undefined>,
+) {
   const requests: CapturedRequest[] = [];
   const fetch: FetchLike = async (url, init) => {
-    requests.push({ url, method: init.method, headers: init.headers, body: init.body === undefined ? null : JSON.parse(init.body) });
+    const captured = { url, method: init.method, headers: init.headers, body: init.body === undefined ? null : JSON.parse(init.body) };
+    requests.push(captured);
     const path = new URL(url).pathname;
-    const r = respond[path] ?? { status: path === "/functions/v1/identify" ? 200 : 204 };
+    const r = (await handle?.(path, captured)) ?? respond[path] ?? { status: path === "/functions/v1/identify" ? 200 : 204 };
     return { ok: r.status >= 200 && r.status < 300, status: r.status, json: async () => r.json ?? {} };
   };
   return { fetch, requests, paths: () => requests.map((r) => new URL(r.url).pathname) };
@@ -131,5 +140,43 @@ export function stubIntl(device: Pick<FakeDevice, "locale" | "timeZone">): () =>
   Intl.DateTimeFormat = fake;
   return () => {
     Intl.DateTimeFormat = Real;
+  };
+}
+
+/** A JWT-shaped attest token (unsigned): a 24 h lifetime, bound to `roca_id`. */
+export const attestJwt = (rocaId: string, n = 0) =>
+  `e30.${Buffer.from(JSON.stringify({ iat: 1_768_000_000, exp: 1_768_086_400, roca_id: rocaId, n })).toString("base64url")}.s`;
+
+/** The roca id an `attestJwt` token is bound to. */
+export const attestJwtRocaId = (token: string): unknown => (JSON.parse(Buffer.from(token.split(".")[1] as string, "base64url").toString()) as { roca_id?: unknown }).roca_id;
+
+/** A RocaAttest stand-in with both platforms' functions; records every call. */
+export function fakeAttestModule(o: { supported?: boolean } = {}) {
+  const calls: string[] = [];
+  let stored: string | null = null;
+  const module: AttestNativeModule = {
+    isSupported: async () => (calls.push("isSupported"), o.supported ?? true),
+    generateKey: async () => (calls.push("generateKey"), "K1"),
+    attestKey: async (k, b) => (calls.push(`attestKey:${k}:${b}`), "ATT"),
+    generateAssertion: async (k, b) => (calls.push(`generateAssertion:${k}:${b}`), "ASR"),
+    getStoredKeyId: async () => stored,
+    setStoredKeyId: async (k) => void (stored = k),
+    prepare: async (n) => void calls.push(`prepare:${n}`),
+    requestToken: async (b) => (calls.push(`requestToken:${b}`), "INT"),
+  };
+  return { module, calls };
+}
+
+/**
+ * The attest endpoints of rocalytics-api: the challenge, then a token bound to the posted roca id.
+ * `post` overrides the POST answer (e.g. a 401, or a gate the test resolves).
+ */
+export function attestApi(o: { post?: (body: Record<string, unknown>) => Reply | Promise<Reply>; challenge?: () => Reply | Promise<Reply> } = {}) {
+  let tokens = 0;
+  return (path: string, request: CapturedRequest): Reply | Promise<Reply> | undefined => {
+    if (path === "/functions/v1/attest/challenge") return o.challenge ? o.challenge() : { status: 200, json: { challenge: "c".repeat(43), expires_at: 1 } };
+    if (path !== "/functions/v1/attest") return undefined;
+    const body = request.body as Record<string, unknown>;
+    return o.post ? o.post(body) : { status: 200, json: { token: attestJwt(body.roca_id as string, ++tokens), expires_at: 1 } };
   };
 }

@@ -16,7 +16,7 @@ export type { RocalyticsClientOptions } from "./client";
 export { createRocalyticsOnboardingSink, rocalyticsOutcome, toOnboardingResponsePayload, toOnboardingRunBody } from "./onboardingSink";
 export { createRocalyticsPaywallSink, paywallIngestOutcome } from "./paywallSink";
 export { loadExpoModules } from "./native";
-export type { ApplicationModule, ExpoModuleLoaders, LoadResult, RocalyticsModules } from "./native";
+export type { ApplicationModule, AttestNativeModule, ExpoModuleLoaders, LoadResult, RocalyticsModules } from "./native";
 export {
   ROCALYTICS_API_BASE,
   ROCALYTICS_ATTRIBUTION_BASE,
@@ -29,10 +29,12 @@ export {
   getEventId,
   rocalyticsHeaders,
   sendRocalyticsRequest,
+  withAuthorization,
 } from "./requests";
 export type { FetchLike, FetchResponseLike, RequestContext, RocalyticsRequest, TrackRequestInput } from "./requests";
 export type {
   AdjustAttribution,
+  AttestOptions,
   DemandScoreResult,
   DemandScoreSignalScore,
   DemandScoreSignals,

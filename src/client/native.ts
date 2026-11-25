@@ -15,6 +15,12 @@
 // not the TurboModule registry, so that probe reports a linked module as
 // missing.
 //
+// The one exception is the attest module (RocaAttest, from the
+// optional attest package): it is used through its native object directly,
+// probed by name and never required as a package, so that installing it stays
+// optional and the SDK keeps no dependency on its package. Without it the
+// client simply sends no attestation.
+//
 // Every require is a string literal, so a bundler can see it. Metro resolves
 // them at bundle time: an app that imports /client without installing a
 // peer fails to bundle, rather than going inert at run time.
@@ -30,6 +36,23 @@ export interface ApplicationModule {
   getIosIdForVendorAsync(): Promise<string | null>;
   getAndroidId(): string;
   getInstallationTimeAsync(): Promise<Date>;
+}
+
+/**
+ * The RocaAttest native module (from the optional attest package). Never required as a package: probed by name.
+ * Must stay identical to `AttestNativeModule` in native/attest/src/index.ts.
+ */
+export interface AttestNativeModule {
+  isSupported(): Promise<boolean>;
+  // iOS
+  generateKey?(): Promise<string>;
+  attestKey?(keyId: string, binding: string): Promise<string>;
+  generateAssertion?(keyId: string, binding: string): Promise<string>;
+  getStoredKeyId?(): Promise<string | null>;
+  setStoredKeyId?(keyId: string | null): Promise<void>;
+  // Android
+  prepare?(cloudProjectNumber: string): Promise<void>;
+  requestToken?(binding: string): Promise<string>;
 }
 
 /** The native capabilities the client uses, shaped like the Expo modules and react-native, which fit as they are. */
@@ -52,6 +75,8 @@ export interface RocalyticsModules {
   platform: { readonly OS: string; readonly Version: string | number };
   /** react-native's `Dimensions`. */
   dimensions: { get(dim: "screen"): { width: number; height: number; scale: number } };
+  /** The RocaAttest native module, or null when the binary does not have it. */
+  attest?: AttestNativeModule | null;
 }
 
 /** How each package is loaded. Injected by tests; the defaults are the literal requires. */
@@ -90,6 +115,12 @@ export function loadExpoModules(loaders: ExpoModuleLoaders = DEFAULT_LOADERS): L
     const core = loaders.core() as { requireOptionalNativeModule(name: string): unknown };
     const missing = NATIVE_MODULES.find((name) => core.requireOptionalNativeModule(name) == null);
     if (missing) return { ok: false, reason: `native module ${missing} is not in this binary` };
+    let attest: AttestNativeModule | null = null;
+    try {
+      attest = (core.requireOptionalNativeModule("RocaAttest") as AttestNativeModule | null | undefined) ?? null;
+    } catch {
+      attest = null;
+    }
     const reactNative = loaders.reactNative() as { Platform: RocalyticsModules["platform"]; Dimensions: RocalyticsModules["dimensions"] };
     return {
       ok: true,
@@ -101,6 +132,7 @@ export function loadExpoModules(loaders: ExpoModuleLoaders = DEFAULT_LOADERS): L
         secureStore: loaders.secureStore() as RocalyticsModules["secureStore"],
         platform: reactNative.Platform,
         dimensions: reactNative.Dimensions,
+        attest,
       },
     };
   } catch (error) {

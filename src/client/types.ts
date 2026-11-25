@@ -25,6 +25,16 @@ export type AdjustAttribution = {
   fbInstallReferrer?: string | null;
 };
 
+/** `RocalyticsClientOptions.attest`: how the client proves to rocalytics-api that its requests come from the genuine app. */
+export type AttestOptions = {
+  /** No attestation, no header. */
+  disabled?: boolean;
+  /** Android: the Google Cloud project number linked to the app in Play Console. Without it, Android sends no token. */
+  cloudProjectNumber?: string;
+  /** The longest a request waits for a token, only while none is cached; none waits on an attestation another request already gave up on. Default 3000 ms. */
+  waitMs?: number;
+};
+
 /** Identifiers for `identify`. Null and undefined values are dropped before sending. */
 export type IdentifyParams = {
   revenue_cat_id?: string | null;

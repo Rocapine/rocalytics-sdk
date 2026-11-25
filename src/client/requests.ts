@@ -5,7 +5,7 @@ export const ROCALYTICS_API_BASE = "https://rocalytics-api.rocapine.io";
 /** The attribution worker: the install ping goes here, through Cloudflare like the ad click. */
 export const ROCALYTICS_ATTRIBUTION_BASE = "https://track.rocapi.ne";
 
-/** What every request carries: the device's roca id, the app id and the platform. There is no auth token. */
+/** What every request carries: the device's roca id, the app id and the platform. The attest token is added after (`withAuthorization`). */
 export interface RequestContext {
   rocaId: string;
   /** The app's bundle id or package name; sent as `unknown` when null. */
@@ -92,6 +92,12 @@ export function buildOnboardingResponseRequest(context: RequestContext, payload:
 /** `/demand-score`. The body is optional server-side, so none is sent without signals. */
 export function buildDemandScoreRequest(context: RequestContext, signals?: DemandScoreSignals): RocalyticsRequest {
   return post(context, "demand-score", signals && Object.keys(signals).length > 0 ? signals : undefined);
+}
+
+/** A copy of `request` with `Authorization: Bearer <token>`; `request` itself when `token` is null. */
+export function withAuthorization(request: RocalyticsRequest, token: string | null): RocalyticsRequest {
+  if (token === null) return request;
+  return { url: request.url, init: { ...request.init, headers: { ...request.init.headers, Authorization: `Bearer ${token}` } } };
 }
 
 /**
