@@ -8,6 +8,14 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-25
+### Changed
+- Attestation runs on `@expo/app-integrity`, now an optional peer dependency, instead of the `@rocapine/rocalytics-attest` package announced in 0.12.0, which is withdrawn and was never published. The client probes the binary for the `ExpoAppIntegrity` native module and never imports the package. Without it the client sends no attestation, as before. Set the App Attest entitlement (`com.apple.developer.devicecheck.appattest-environment`) in `app.json` yourself: there is no config plugin any more. The API contract is unchanged: the binding string is hashed the same way on both platforms (the Play Integrity request hash is now computed in JS with `expo-crypto`). The iOS key id is kept in the secure store.
+- `RocalyticsModules.crypto` gains an optional `digestStringAsync` (expo-crypto's); custom `modules` without it send no attestation on Android.
+- `AttestNativeModule` (`/client`) now describes `@expo/app-integrity`'s functions, and provider errors are classified by its `ERR_APP_INTEGRITY_*` codes.
+### Added
+- `/client`: `requestHashOf(crypto, binding)`, the Play Integrity request hash of a binding string.
+
 ## [0.12.0] - 2026-11-24
 ### Added
 - Attestation. `@rocapine/rocalytics-sdk/client`: `RocalyticsClient` sends an App Attest (iOS) or Play Integrity (Android) token to rocalytics-api as `Authorization: Bearer <token>` when the app has the new native package `@rocapine/rocalytics-attest` (published separately, with an Expo config plugin taking `appAttestEnvironment`). New option `attest: { disabled?, cloudProjectNumber?, waitMs? }` and `attestHeaders(batch?)`, which returns the header only when the token matches the batch's app_id, platform and roca ids, else `{}`. `/core`: the token manager and `bindingString`. Never throws; a request, and `attestHeaders` with start-up included, waits at most `attest.waitMs` (default 3000 ms), only while no token is cached, and not on an attestation another request already gave up on. An attestation unfinished after 30 s (`FLIGHT_DEADLINE_MS`) is retried after a backoff and reported as `attest-timeout`. Simulators, emulators, builds without the module and unsupported devices send no header.

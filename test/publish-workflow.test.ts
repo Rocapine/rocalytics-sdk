@@ -32,12 +32,6 @@ describe("publish workflow (npm trusted publishing)", () => {
     expect(publishJob).toMatch(/^ {4}environment: npm$/m);
   });
 
-  it("skips attest-v* releases (publish-attest.yml publishes those)", () => {
-    expect(publishJob).toMatch(/^ {4}if: \$\{\{ !startsWith\(github\.event\.release\.tag_name, 'attest-v'\) \}\}$/m);
-    // notify-roca-chandler needs publish, so a skipped publish skips it too.
-    expect(yml).toMatch(/^ {2}notify-roca-chandler:\n {4}needs: publish$/m);
-  });
-
   it("tells roca-chandler about the release only after it is published", () => {
     expect(yml).toMatch(/^ {2}notify-roca-chandler:\n {4}needs: publish$/m);
     expect(yml).toContain("repos/Rocapine/roca-chandler/dispatches");

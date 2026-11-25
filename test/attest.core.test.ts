@@ -34,11 +34,12 @@ describe("classifyAttestResponse", () => {
 describe("classifyProviderError", () => {
   const err = (code?: string) => Object.assign(new Error("x"), code ? { code } : {});
   it.each([
-    ["E_DC_1", "unsupported"], ["E_PI_API_NOT_AVAILABLE", "unsupported"], ["E_PI_PLAY_STORE_NOT_FOUND", "unsupported"],
-    ["E_DC_3", "new_key"],
-    ["E_DC_4", "backoff"], ["E_DC_0", "backoff"], ["E_PI_NETWORK_ERROR", "backoff"], ["E_PI_TOO_MANY_REQUESTS", "backoff"],
-    ["E_PI_CLIENT_TRANSIENT_ERROR", "backoff"], ["E_PI_CANNOT_BIND_TO_SERVICE", "backoff"],
-    ["E_PI_CLOUD_PROJECT_NUMBER_IS_INVALID", "config"], ["E_DC_2", "config"], ["E_PI_REQUEST_HASH_TOO_LONG", "config"],
-    ["E_SOMETHING", "rejected"], [undefined, "rejected"],
+    ["ERR_APP_INTEGRITY_FEATURE_UNSUPPORTED", "unsupported"], ["ERR_APP_INTEGRITY_API_NOT_AVAILABLE", "unsupported"], ["ERR_APP_INTEGRITY_PLAY_STORE_NOT_FOUND", "unsupported"],
+    ["ERR_APP_INTEGRITY_INVALID_KEY", "new_key"],
+    ["ERR_APP_INTEGRITY_SERVER_UNAVAILABLE", "backoff"], ["ERR_APP_INTEGRITY_SYSTEM_FAILURE", "backoff"], ["ERR_APP_INTEGRITY_NETWORK_ERROR", "backoff"], ["ERR_APP_INTEGRITY_TOO_MANY_REQUESTS", "backoff"],
+    ["ERR_APP_INTEGRITY_CLIENT_TRANSIENT_ERROR", "backoff"], ["ERR_APP_INTEGRITY_CANNOT_BIND_SERVICE", "backoff"],
+    ["ERR_APP_INTEGRITY_INVALID_PROJECT_NUMBER", "config"], ["ERR_APP_INTEGRITY_INVALID_INPUT", "config"], ["ERR_APP_INTEGRITY_REQUEST_HASH_TOO_LONG", "config"],
+    ["ERR_APP_INTEGRITY_PROVIDER_INVALID", "backoff"], ["ERR_APP_INTEGRITY_PROVIDER_NOT_PREPARED", "backoff"], ["ERR_APP_INTEGRITY_CANCELLED", "backoff"],
+    ["ERR_APP_INTEGRITY_UNKNOWN", "rejected"], ["E_SOMETHING", "rejected"], [undefined, "rejected"],
   ])("%s → %s", (code, action) => expect(classifyProviderError(err(code))).toBe(action));
 });

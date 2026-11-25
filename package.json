@@ -1,6 +1,6 @@
 {
   "name": "@rocapine/rocalytics-sdk",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Headless client SDK for Onboarding Studio: a typed onboarding run tracker for any onboarding, including hand-coded ones, and the Rocalytics client",
   "keywords": [
     "onboarding",
@@ -89,6 +89,7 @@
     "e2e:analytics": "npm run build && node scripts/e2e-analytics.mjs"
   },
   "peerDependencies": {
+    "@expo/app-integrity": "*",
     "expo-application": "*",
     "expo-crypto": "*",
     "expo-device": "*",
@@ -98,6 +99,9 @@
     "react-native": "*"
   },
   "peerDependenciesMeta": {
+    "@expo/app-integrity": {
+      "optional": true
+    },
     "expo-application": {
       "optional": true
     },

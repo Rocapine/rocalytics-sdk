@@ -2,7 +2,9 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { loadExpoModules, type AttestNativeModule, type ExpoModuleLoaders, type RocalyticsModules } from "../src/client/native";
-import { secureStoreStorage, toAttestProvider } from "../src/client/attestProvider";
+import { createHash } from "node:crypto";
+import { ATTEST_KEY_ID_KEY, requestHashOf, secureStoreStorage, toAttestProvider } from "../src/client/attestProvider";
+import { memoryStorage } from "../src/core";
 
 const ALL = ["ExpoApplication", "ExpoCrypto", "ExpoDevice", "ExpoNetwork", "ExpoSecureStore"];
 
@@ -25,85 +27,140 @@ function loaders(opts: { optional?: Record<string, unknown>; throwOn?: string } 
   };
 }
 
-describe("RocaAttest probe", () => {
-  it("RocaAttest absent → modules.attest is null and loading still succeeds", () => {
-    const result = loadExpoModules(loaders({ optional: { RocaAttest: null } }));
+describe("ExpoAppIntegrity probe", () => {
+  it("ExpoAppIntegrity absent → modules.attest is null and loading still succeeds", () => {
+    const result = loadExpoModules(loaders({ optional: { ExpoAppIntegrity: null } }));
     expect(result).toMatchObject({ ok: true, modules: { attest: null } });
   });
 
-  it("RocaAttest present → modules.attest is the object requireOptionalNativeModule returned", () => {
-    const native = { isSupported: async () => true };
-    const result = loadExpoModules(loaders({ optional: { RocaAttest: native } }));
+  it("ExpoAppIntegrity present → modules.attest is the object requireOptionalNativeModule returned", () => {
+    const native = { isSupported: true };
+    const result = loadExpoModules(loaders({ optional: { ExpoAppIntegrity: native } }));
     expect(result.ok && result.modules.attest).toBe(native);
   });
 
-  it("requireOptionalNativeModule('RocaAttest') throwing → attest null, loading still succeeds", () => {
-    const result = loadExpoModules(loaders({ throwOn: "RocaAttest" }));
+  it("requireOptionalNativeModule('ExpoAppIntegrity') throwing → attest null, loading still succeeds", () => {
+    const result = loadExpoModules(loaders({ throwOn: "ExpoAppIntegrity" }));
     expect(result).toMatchObject({ ok: true, modules: { attest: null } });
   });
 
-  it("RocaAttest is never in the required list: a binary without it is not inert", () => {
+  it("ExpoAppIntegrity is never in the required list: a binary without it is not inert", () => {
     const result = loadExpoModules(loaders());
     expect(result.ok).toBe(true);
   });
 
-  it("no require of '@rocapine/rocalytics-attest' anywhere in src/", () => {
+  it("no import or require of '@expo/app-integrity' anywhere in src/: it is probed, never loaded", () => {
     const walk = (dir: string): string[] =>
       readdirSync(dir).flatMap((f) => {
         const p = join(dir, f);
         return statSync(p).isDirectory() ? walk(p) : [p];
       });
     for (const file of walk(join(__dirname, "..", "src"))) {
-      expect(readFileSync(file, "utf8"), file).not.toContain("@rocapine/rocalytics-attest");
+      expect(readFileSync(file, "utf8"), file).not.toMatch(/(?:from|require\()\s*["']@expo\/app-integrity["']/);
     }
   });
 });
 
-describe("toAttestProvider", () => {
-  const full = (): AttestNativeModule & { calls: string[] } => {
-    const self = {
-      calls: [] as string[],
-      token: "T",
-      isSupported: async () => true,
-      generateKey: async function (this: unknown) { return this === self ? "key" : "wrong-this"; },
-      attestKey: async (k: string, b: string) => `att:${k}:${b}`,
-      generateAssertion: async (k: string, b: string) => `ass:${k}:${b}`,
-      getStoredKeyId: async () => null,
-      setStoredKeyId: async () => undefined,
-      prepare: async function (this: unknown, n: string) { self.calls.push(`prepare:${n}:${this === self}`); },
-      requestToken: async (b: string) => `tok:${b}`,
-    };
-    return self;
-  };
+const sha256Crypto: Required<RocalyticsModules["crypto"]> = {
+  randomUUID: () => "u",
+  digestStringAsync: async (_a, data) => createHash("sha256").update(data, "utf8").digest("base64"),
+};
 
-  it("exposes the iOS functions for 'ios' and the Android ones for 'android'; 'web' → null", async () => {
-    const n = full();
-    const ios = toAttestProvider(n, "ios");
-    expect(ios?.platform).toBe("ios");
-    if (ios?.platform === "ios") {
-      expect(await ios.generateKey()).toBe("key");
-      expect(await ios.attestKey("k", "b")).toBe("att:k:b");
-      expect(await ios.generateAssertion("k", "b")).toBe("ass:k:b");
-    }
-    const android = toAttestProvider(n, "android");
-    expect(android?.platform).toBe("android");
-    if (android?.platform === "android") {
-      await android.prepare("123");
-      expect(await android.requestToken("b")).toBe("tok:b");
-      expect(n.calls).toEqual(["prepare:123:true"]);
-    }
-    expect(toAttestProvider(n, "web")).toBeNull();
+describe("requestHashOf", () => {
+  it("is SHA-256 of the binding's UTF-8 bytes, base64url without padding", async () => {
+    const binding = "c|com.a|r1é";
+    expect(await requestHashOf(sha256Crypto, binding)).toBe(createHash("sha256").update(binding, "utf8").digest("base64url"));
+    expect(await requestHashOf(sha256Crypto, binding)).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+});
+
+describe("toAttestProvider", () => {
+  const codeError = (code: string) => Object.assign(new Error(code), { code });
+  const full = () => {
+    const calls: string[] = [];
+    const self: AttestNativeModule & { failNext: string[] } = {
+      failNext: [],
+      isSupported: true,
+      generateKeyAsync: async function (this: unknown) { return this === self ? "key" : "wrong-this"; },
+      attestKeyAsync: async (k: string, b: string) => `att:${k}:${b}`,
+      generateAssertionAsync: async (k: string, b: string) => `ass:${k}:${b}`,
+      prepareIntegrityTokenProviderAsync: async function (this: unknown, n: string) { calls.push(`prepare:${n}:${this === self}`); },
+      requestIntegrityCheckAsync: async (h: string) => {
+        calls.push(`request:${h}`);
+        const fail = self.failNext.shift();
+        if (fail) throw codeError(fail);
+        return "tok";
+      },
+    };
+    return { native: self, calls };
+  };
+  const deps = () => ({ storage: memoryStorage(), crypto: sha256Crypto });
+  const hash = (b: string) => createHash("sha256").update(b, "utf8").digest("base64url");
+
+  it("iOS: forwards the binding as the challenge, keeps the key id in storage, reads isSupported", async () => {
+    const { native } = full();
+    const d = deps();
+    const ios = toAttestProvider(native, "ios", d);
+    if (ios?.platform !== "ios") throw new Error("expected ios");
+    expect(await ios.isSupported()).toBe(true);
+    expect(await ios.generateKey()).toBe("key");
+    expect(await ios.attestKey("k", "b")).toBe("att:k:b");
+    expect(await ios.generateAssertion("k", "b")).toBe("ass:k:b");
+    expect(await ios.getStoredKeyId()).toBeNull();
+    await ios.setStoredKeyId("K1");
+    expect(await ios.getStoredKeyId()).toBe("K1");
+    expect(await d.storage.getItem(ATTEST_KEY_ID_KEY)).toBe("K1");
+    await ios.setStoredKeyId(null);
+    expect(await ios.getStoredKeyId()).toBeNull();
+    const unsupported = toAttestProvider({ ...native, isSupported: false }, "ios", d);
+    expect(await unsupported?.isSupported()).toBe(false);
+    const noFlag = toAttestProvider({ ...native, isSupported: undefined }, "ios", d);
+    expect(await noFlag?.isSupported()).toBe(false);
   });
 
-  it("a missing function for the platform → null", () => {
-    const n = full();
-    delete n.generateAssertion;
-    expect(toAttestProvider(n, "ios")).toBeNull();
-    expect(toAttestProvider(n, "android")).not.toBeNull();
-    const m = full();
-    delete m.requestToken;
-    expect(toAttestProvider(m, "android")).toBeNull();
-    expect(toAttestProvider(m, "ios")).not.toBeNull();
+  it("Android: prepare passes the number through; requestToken sends the binding's request hash", async () => {
+    const { native, calls } = full();
+    const android = toAttestProvider(native, "android", deps());
+    if (android?.platform !== "android") throw new Error("expected android");
+    await android.prepare("123");
+    expect(await android.requestToken("b")).toBe("tok");
+    expect(calls).toEqual(["prepare:123:true", `request:${hash("b")}`]);
+  });
+
+  it("Android: ERR_APP_INTEGRITY_PROVIDER_INVALID → prepares again with the same number and retries once", async () => {
+    const { native, calls } = full();
+    const android = toAttestProvider(native, "android", deps());
+    if (android?.platform !== "android") throw new Error("expected android");
+    await android.prepare("123");
+    native.failNext = ["ERR_APP_INTEGRITY_PROVIDER_INVALID"];
+    expect(await android.requestToken("b")).toBe("tok");
+    expect(calls).toEqual(["prepare:123:true", `request:${hash("b")}`, "prepare:123:true", `request:${hash("b")}`]);
+    native.failNext = ["ERR_APP_INTEGRITY_PROVIDER_INVALID", "ERR_APP_INTEGRITY_PROVIDER_INVALID"];
+    await expect(android.requestToken("b")).rejects.toMatchObject({ code: "ERR_APP_INTEGRITY_PROVIDER_INVALID" });
+  });
+
+  it("Android: any other error passes through without a retry", async () => {
+    const { native, calls } = full();
+    const android = toAttestProvider(native, "android", deps());
+    if (android?.platform !== "android") throw new Error("expected android");
+    await android.prepare("123");
+    native.failNext = ["ERR_APP_INTEGRITY_NETWORK_ERROR"];
+    await expect(android.requestToken("b")).rejects.toMatchObject({ code: "ERR_APP_INTEGRITY_NETWORK_ERROR" });
+    expect(calls).toEqual(["prepare:123:true", `request:${hash("b")}`]);
+  });
+
+  it("'web' → null; a missing function for the platform → null", () => {
+    const { native } = full();
+    expect(toAttestProvider(native, "web", deps())).toBeNull();
+    const n = { ...native, generateAssertionAsync: undefined };
+    expect(toAttestProvider(n, "ios", deps())).toBeNull();
+    expect(toAttestProvider(n, "android", deps())).not.toBeNull();
+    const m = { ...native, requestIntegrityCheckAsync: undefined };
+    expect(toAttestProvider(m, "android", deps())).toBeNull();
+    expect(toAttestProvider(m, "ios", deps())).not.toBeNull();
+    const noDigest = { storage: memoryStorage(), crypto: { randomUUID: () => "u" } };
+    expect(toAttestProvider(native, "android", noDigest)).toBeNull();
+    expect(toAttestProvider(native, "ios", noDigest)).not.toBeNull();
   });
 });
 

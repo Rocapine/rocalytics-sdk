@@ -16,6 +16,7 @@ export type { RocalyticsClientOptions } from "./client";
 export { createRocalyticsOnboardingSink, rocalyticsOutcome, toOnboardingResponsePayload, toOnboardingRunBody } from "./onboardingSink";
 export { createRocalyticsPaywallSink, paywallIngestOutcome } from "./paywallSink";
 export { loadExpoModules } from "./native";
+export { requestHashOf } from "./attestProvider";
 export type { ApplicationModule, AttestNativeModule, ExpoModuleLoaders, LoadResult, RocalyticsModules } from "./native";
 export {
   ROCALYTICS_API_BASE,

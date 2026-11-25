@@ -4,9 +4,9 @@ The rocalytics-api device tests need two real captures. Nothing captured goes in
 
 ## Build
 
-- A development build of any Expo app that has the SDK and `@rocapine/rocalytics-attest`.
-- iOS: a real device (App Attest does not work on simulators), with the config plugin on the **development** environment, because the API's tests expect a development key:
-  `["@rocapine/rocalytics-attest", { "appAttestEnvironment": "development" }]`
+- A development build of any Expo app that has the SDK and `@expo/app-integrity`.
+- iOS: a real device (App Attest does not work on simulators), with the App Attest entitlement on the **development** environment, because the API's tests expect a development key:
+  `"ios": { "entitlements": { "com.apple.developer.devicecheck.appattest-environment": "development" } }`
 - Android: install the build from the Play internal testing track (Play Integrity needs a Play-distributed app), with the Cloud project linked to Play Integrity.
 
 ## Capture

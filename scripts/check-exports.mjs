@@ -72,7 +72,9 @@ for (const sub of ["onboarding", "core", "paywall", "analytics"]) {
   check(!reached.some((f) => f.startsWith(`client${path.sep}`)), `/${sub} never reaches a dist/client file`);
 }
 
-const PEERS = Object.keys(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).peerDependencies ?? {}).sort();
+// @expo/app-integrity is a peer the client never requires: it probes its native module (ExpoAppIntegrity) by name.
+const PROBED_ONLY = ["@expo/app-integrity"];
+const PEERS = Object.keys(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).peerDependencies ?? {}).filter((p) => !PROBED_ONLY.includes(p)).sort();
 const listJs = (dir) =>
   fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
     d.isDirectory() ? listJs(path.join(dir, d.name)) : d.name.endsWith(".js") ? [path.join(dir, d.name)] : [],
