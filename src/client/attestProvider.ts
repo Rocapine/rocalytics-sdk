@@ -13,14 +13,14 @@ export interface AttestProviderDeps {
 const code = (error: unknown): unknown => (typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined);
 
 /** Play Integrity's request hash for a binding string: SHA-256 of its UTF-8 bytes, base64url without padding (43 chars). */
-export async function requestHashOf(crypto: RocalyticsModules["crypto"], binding: string): Promise<string> {
+export async function requestHashOf(crypto: Pick<Required<RocalyticsModules["crypto"]>, "digestStringAsync">, binding: string): Promise<string> {
   const b64 = await crypto.digestStringAsync("SHA-256", binding, { encoding: "base64" });
   return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 /**
  * Adapts ExpoAppIntegrity (`@expo/app-integrity`) to the core provider. Null when `os` is neither ios nor android,
- * or a function of that platform is missing.
+ * or a function of that platform is missing (on Android, expo-crypto's `digestStringAsync` included).
  */
 export function toAttestProvider(native: AttestNativeModule, os: string, deps: AttestProviderDeps): AttestProvider | null {
   if (os === "ios") {
@@ -40,7 +40,9 @@ export function toAttestProvider(native: AttestNativeModule, os: string, deps: A
   }
   if (os === "android") {
     const { prepareIntegrityTokenProviderAsync: prepare, requestIntegrityCheckAsync: request } = native;
-    if (!prepare || !request) return null;
+    const { digestStringAsync } = deps.crypto;
+    if (!prepare || !request || !digestStringAsync) return null;
+    const digest = { digestStringAsync: digestStringAsync.bind(deps.crypto) };
     let cloudProjectNumber: string | null = null;
     return {
       platform: "android",
@@ -50,7 +52,7 @@ export function toAttestProvider(native: AttestNativeModule, os: string, deps: A
         cloudProjectNumber = number;
       },
       requestToken: async (binding) => {
-        const hash = await requestHashOf(deps.crypto, binding);
+        const hash = await requestHashOf(digest, binding);
         try {
           return await request.call(native, hash);
         } catch (error) {

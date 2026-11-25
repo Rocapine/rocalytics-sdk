@@ -58,8 +58,8 @@ export interface RocalyticsModules {
   application: ApplicationModule;
   crypto: {
     randomUUID(): string;
-    /** expo-crypto's digest; the client passes "SHA-256" and { encoding: "base64" }. */
-    digestStringAsync(algorithm: string, data: string, options?: { encoding: string }): Promise<string>;
+    /** expo-crypto's digest; the client passes "SHA-256" and { encoding: "base64" }. Without it Android sends no attestation. */
+    digestStringAsync?(algorithm: string, data: string, options?: { encoding: string }): Promise<string>;
   };
   device: {
     readonly brand: string | null;

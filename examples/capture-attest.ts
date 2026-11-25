@@ -77,7 +77,7 @@ export async function captureAndroidProof(o: CaptureAndroidOptions) {
   const m = nativeModule();
   const challenge = await fetchChallenge(o, "android");
   await need(m.prepareIntegrityTokenProviderAsync, "prepareIntegrityTokenProviderAsync").call(m, o.cloudProjectNumber);
-  const crypto = require("expo-crypto") as RocalyticsModules["crypto"];
+  const crypto = require("expo-crypto") as Required<RocalyticsModules["crypto"]>;
   const requestHash = await requestHashOf(crypto, bindingString(challenge, o.appId, o.rocaId));
   const integrityToken = await need(m.requestIntegrityCheckAsync, "requestIntegrityCheckAsync").call(m, requestHash);
   const proof = {

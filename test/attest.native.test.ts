@@ -61,7 +61,7 @@ describe("ExpoAppIntegrity probe", () => {
   });
 });
 
-const sha256Crypto: RocalyticsModules["crypto"] = {
+const sha256Crypto: Required<RocalyticsModules["crypto"]> = {
   randomUUID: () => "u",
   digestStringAsync: async (_a, data) => createHash("sha256").update(data, "utf8").digest("base64"),
 };
@@ -158,6 +158,9 @@ describe("toAttestProvider", () => {
     const m = { ...native, requestIntegrityCheckAsync: undefined };
     expect(toAttestProvider(m, "android", deps())).toBeNull();
     expect(toAttestProvider(m, "ios", deps())).not.toBeNull();
+    const noDigest = { storage: memoryStorage(), crypto: { randomUUID: () => "u" } };
+    expect(toAttestProvider(native, "android", noDigest)).toBeNull();
+    expect(toAttestProvider(native, "ios", noDigest)).not.toBeNull();
   });
 });
 
