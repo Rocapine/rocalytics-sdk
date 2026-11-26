@@ -1,4 +1,4 @@
-import { DEFAULT_ATTEST_WAIT_MS, createAttestTokenManager, type AttestBinding, type AttestTokenManager } from "../core/attest";
+import { DEFAULT_ATTEST_WAIT_MS, INSTALL_ATTEST_WAIT_MS, createAttestTokenManager, type AttestBinding, type AttestTokenManager } from "../core/attest";
 import { safeDiagnostics, type DiagnosticHandler } from "../core/diagnostics";
 import type { SinkResult } from "../core/sink";
 import { systemClock, systemTimers, type Clock, type Timers } from "../core/time";
@@ -16,6 +16,7 @@ import {
   buildPaywallPresentationRequest,
   buildTrackRequest,
   ROCALYTICS_API_BASE,
+  RocalyticsHttpError,
   sendRocalyticsRequest,
   withAuthorization,
   type FetchLike,
@@ -420,7 +421,8 @@ export class RocalyticsClient {
       for (const key of LEGACY_INSTALL_TRACKED_KEYS) tracked = tracked || (await store.getItemAsync(key));
       if (!tracked) {
         const installTime = await native.application.getInstallationTimeAsync();
-        await this.sendTrack("install", { install_time: installTime });
+        // Waits for the first attestation (patient), so the install carries the token.
+        await this.sendTrack("install", { install_time: installTime }, undefined, undefined, INSTALL_WAIT);
         await store.setItemAsync(INSTALL_TRACKED_KEY, "true");
         if (this.options.installPing !== false) await this.sendInstallPing();
       }
@@ -462,10 +464,10 @@ export class RocalyticsClient {
   }
 
   /** The manager's token and what it is bound to, or null. Never throws. */
-  private async binding(): Promise<AttestBinding | null> {
+  private async binding(wait?: AttestWait): Promise<AttestBinding | null> {
     if (!this.attest) return null;
     try {
-      return await this.attest.getBinding(this.options.attest?.waitMs);
+      return wait ? await this.attest.getBinding(wait.ms, { patient: true }) : await this.attest.getBinding(this.options.attest?.waitMs);
     } catch {
       return null;
     }
@@ -476,8 +478,8 @@ export class RocalyticsClient {
    * X-Application-ID, X-Platform and X-Roca-ID (the roca id may have changed
    * while the request waited); else `request` as is.
    */
-  private async authorize(request: RocalyticsRequest): Promise<RocalyticsRequest> {
-    const binding = await this.binding();
+  private async authorize(request: RocalyticsRequest, wait?: AttestWait): Promise<RocalyticsRequest> {
+    const binding = await this.binding(wait);
     const h = request.init.headers;
     const fits = binding !== null && binding.app_id === h["X-Application-ID"] && binding.platform === h["X-Platform"] && binding.roca_id === h["X-Roca-ID"];
     return withAuthorization(request, fits ? binding.token : null);
@@ -581,12 +583,25 @@ export class RocalyticsClient {
     return this.options.fetch ?? (globalThis as { fetch?: FetchLike }).fetch;
   }
 
-  /** Sends `request`, with the attest token except to the attribution worker. Without a manager it sends at once, as before attestation. */
-  private send(request: RocalyticsRequest, endpoint: string, detail?: string) {
+  /**
+   * Sends `request`, with the attest token except to the attribution worker. Without a manager it sends at once, as before attestation.
+   * Sent without a token and answered 401 attestation_required (an app in enforce), it waits for the attestation
+   * (patient, up to INSTALL_ATTEST_WAIT_MS) and, with a token, sends it once more.
+   */
+  private async send(request: RocalyticsRequest, endpoint: string, detail?: string, wait?: AttestWait) {
     const fetch = this.fetchFn();
-    if (!fetch) return Promise.reject(new Error(`[ROCALYTICS] ${endpoint} failed: no fetch available`));
+    if (!fetch) throw new Error(`[ROCALYTICS] ${endpoint} failed: no fetch available`);
     if (!this.attest || endpoint === "install-ping") return sendRocalyticsRequest(fetch, request, endpoint, detail);
-    return this.authorize(request).then((authorized) => sendRocalyticsRequest(fetch, authorized, endpoint, detail));
+    const authorized = await this.authorize(request, wait);
+    try {
+      return await sendRocalyticsRequest(fetch, authorized, endpoint, detail);
+    } catch (error) {
+      const required = error instanceof RocalyticsHttpError && error.status === 401 && error.error === "attestation_required";
+      if (!required || authorized !== request) throw error;
+      const retry = await this.authorize(request, INSTALL_WAIT);
+      if (retry === request) throw error;
+      return sendRocalyticsRequest(fetch, retry, endpoint, detail);
+    }
   }
 
   private async sendIdentify(identifiers: IdentifyParams): Promise<void> {
@@ -603,7 +618,7 @@ export class RocalyticsClient {
     }
   }
 
-  private async sendTrack(name: string, properties: Record<string, unknown>, deduplicationId?: string, customEvent?: boolean): Promise<void> {
+  private async sendTrack(name: string, properties: Record<string, unknown>, deduplicationId?: string, customEvent?: boolean, wait?: AttestWait): Promise<void> {
     const request = buildTrackRequest(this.context(), {
       name,
       properties,
@@ -611,6 +626,12 @@ export class RocalyticsClient {
       deduplicationId,
       customEvent,
     });
-    await this.send(request, "track", name);
+    await this.send(request, "track", name, wait);
   }
 }
+
+/** A patient wait for the attest token: it waits on an attestation another request gave up on. */
+interface AttestWait {
+  ms: number;
+}
+const INSTALL_WAIT: AttestWait = { ms: INSTALL_ATTEST_WAIT_MS };

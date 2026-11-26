@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EventBatch } from "../src/analytics";
-import { RocalyticsClient, type RocalyticsClientOptions, type RocalyticsModules } from "../src/client";
-import { ATTEST_TOKEN_KEY } from "../src/core";
+import { INSTALL_TRACKED_KEY, RocalyticsClient, type RocalyticsClientOptions, type RocalyticsModules } from "../src/client";
+import { ATTEST_TOKEN_KEY, INSTALL_ATTEST_WAIT_MS } from "../src/core";
 import type { OnboardingRunSnapshot } from "../src/onboarding";
 import type { PaywallPresentationSnapshot } from "../src/paywall";
 import { ManualTime, flushMicrotasks } from "./fakes";
@@ -73,12 +73,15 @@ function setup(
   o: {
     attest?: ReturnType<typeof fakeAttestModule>["module"] | null;
     api?: Parameters<typeof attestApi>[0];
+    /** Answers non-attest requests before the defaults (e.g. a 401 from /track). */
+    respond?: (path: string, request: CapturedRequest) => { status: number; json?: unknown } | undefined;
     modules?: (m: RocalyticsModules) => RocalyticsModules;
     options?: Partial<RocalyticsClientOptions> & { timers?: unknown };
   } = {},
 ) {
   const attest = o.attest === undefined ? fakeAttestModule().module : o.attest;
-  const http = recordingFetch({}, attestApi(o.api));
+  const attestHandler = attestApi(o.api);
+  const http = recordingFetch({}, (path, request) => attestHandler(path, request) ?? o.respond?.(path, request));
   const base = { ...fakeModules(IOS, store), ...(attest ? { attest } : {}) };
   const client = new RocalyticsClient({
     modules: o.modules ? o.modules(base) : base,
@@ -136,7 +139,7 @@ describe("RocalyticsClient attestation", () => {
     expect(api().filter((r) => r.url.endsWith(`${API}track`)).every((r) => auth(r) !== undefined)).toBe(true);
   });
 
-  it("getToken null (module present, attestation failing) → requests go out without the header, at most waitMs late", async () => {
+  it("getToken null (module present, attestation failing) → identify goes out at waitMs, install at INSTALL_ATTEST_WAIT_MS, both without the header", async () => {
     const time = new ManualTime();
     const never = new Promise<never>(() => {});
     const { client, api } = setup({
@@ -146,10 +149,73 @@ describe("RocalyticsClient attestation", () => {
     await time.advance(499);
     expect(api()).toEqual([]);
     await time.advance(1);
-    // identify gave up on the pending attestation, so the install track does not wait for it again
+    expect(api().map((r) => new URL(r.url).pathname)).toEqual([`${API}identify`]);
+    // install waits for the attestation identify gave up on, up to INSTALL_ATTEST_WAIT_MS
+    await time.advance(INSTALL_ATTEST_WAIT_MS - 1);
+    expect(api()).toHaveLength(1);
+    await time.advance(1);
     await client.ready;
     expect(api().map((r) => new URL(r.url).pathname)).toEqual([`${API}identify`, `${API}track`]);
     expect(api().every((r) => auth(r) === undefined)).toBe(true);
+  });
+
+  it("a first attestation slower than waitMs: identify goes without the header, install waits and carries the token", async () => {
+    const time = new ManualTime();
+    const { client, api } = setup({
+      api: { challenge: () => new Promise((resolve) => time.timers.setTimeout(() => resolve({ status: 200, json: { challenge: "c".repeat(43), expires_at: 1 } }), 2000)) },
+      options: { clock: time.clock, timers: time.timers, attest: { waitMs: 500 }, installPing: false },
+    });
+    await time.advance(500);
+    expect(api().map((r) => new URL(r.url).pathname)).toEqual([`${API}identify`]);
+    expect(auth(api()[0]!)).toBeUndefined();
+    await time.advance(1500);
+    await client.ready;
+    const install = api().find((r) => (r.body as { name?: string } | null)?.name === "install");
+    expect(auth(install!)).toBe(`Bearer ${attestJwt(ROCA_ID, 1)}`);
+    expect(await store.getItemAsync(INSTALL_TRACKED_KEY)).toBe("true");
+  });
+
+  it("401 attestation_required to a request without the header → waits for the attestation and sends it once more, with the token", async () => {
+    const time = new ManualTime();
+    const landsAt = INSTALL_ATTEST_WAIT_MS + 5000; // after install gave up, before the flight's deadline
+    const { client, api } = setup({
+      api: { challenge: () => new Promise((resolve) => time.timers.setTimeout(() => resolve({ status: 200, json: { challenge: "c".repeat(43), expires_at: 1 } }), landsAt)) },
+      respond: (path, r) => (path === `${API}track` && !auth(r) ? { status: 401, json: { error: "attestation_required" } } : undefined),
+      options: { clock: time.clock, timers: time.timers, attest: { waitMs: 500 }, installPing: false },
+    });
+    await time.advance(INSTALL_ATTEST_WAIT_MS + 500);
+    const tracks = () => api().filter((r) => r.url.endsWith(`${API}track`));
+    expect(tracks()).toHaveLength(1);
+    expect(auth(tracks()[0]!)).toBeUndefined();
+    await time.advance(landsAt);
+    await client.ready;
+    expect(tracks()).toHaveLength(2);
+    expect(auth(tracks()[1]!)).toBe(`Bearer ${attestJwt(ROCA_ID, 1)}`);
+    expect(tracks()[1]!.body).toEqual(tracks()[0]!.body);
+    expect(await store.getItemAsync(INSTALL_TRACKED_KEY)).toBe("true");
+  });
+
+  it("401 attestation_required and no token comes → no second send; install stays unsent for the next launch", async () => {
+    const time = new ManualTime();
+    const never = new Promise<never>(() => {});
+    const { client, api } = setup({
+      api: { challenge: () => never },
+      respond: (path, r) => (path === `${API}track` && !auth(r) ? { status: 401, json: { error: "attestation_required" } } : undefined),
+      options: { clock: time.clock, timers: time.timers, attest: { waitMs: 500 }, installPing: false },
+    });
+    await time.advance(INSTALL_ATTEST_WAIT_MS * 3);
+    await client.ready;
+    expect(api().filter((r) => r.url.endsWith(`${API}track`))).toHaveLength(1);
+    expect(await store.getItemAsync(INSTALL_TRACKED_KEY)).toBeNull();
+  });
+
+  it("any other 4xx, or a 401 to a request that carried the token → no second send", async () => {
+    for (const reply of [{ status: 401, json: { error: "token_invalid" } }, { status: 403, json: { error: "token_mismatch" } }]) {
+      const { client, api } = setup({ respond: (path) => (path === `${API}track` ? reply : undefined), options: { installPing: false } });
+      await client.ready;
+      await expect(client.track("purchase")).rejects.toThrow(String(reply.status));
+      expect(api().filter((r) => r.url.endsWith(`${API}track`))).toHaveLength(2); // the install, then the purchase: one send each
+    }
   });
 
   it("attestation rejected (401) → one POST /attest, every request without the header, no wait", async () => {
@@ -244,11 +310,11 @@ describe("RocalyticsClient attestation", () => {
     const gate = new Promise<void>((r) => (release = r));
     const { client } = setup({
       api: { post: async (body) => (await gate, { status: 200, json: { token: attestJwt(body.roca_id as string, 1), expires_at: 1 } }) },
-      options: { attest: { waitMs: 20 } },
+      options: { attest: { waitMs: 20 }, installPing: false },
     });
-    await client.ready;
-    expect(await client.attestHeaders()).toEqual({});
+    expect(await client.attestHeaders()).toEqual({}); // start-up (the install waits for the token) outlasts waitMs
     release();
+    await client.ready;
     await vi.waitFor(async () => expect(await client.attestHeaders()).toEqual({ Authorization: `Bearer ${attestJwt(ROCA_ID, 1)}` }));
   });
 

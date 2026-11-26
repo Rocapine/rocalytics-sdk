@@ -8,6 +8,14 @@ Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-11-26
+### Changed
+- The `install` event waits up to 20 s (`INSTALL_ATTEST_WAIT_MS`) for the first attestation instead of `attest.waitMs`, even when `identify` already gave up on it, so a first launch sends an attested install. Start-up, and every request waiting on it, takes up to that much longer on a first launch with a slow attestation.
+- A request sent without a token and answered 401 `attestation_required` (an app in enforce) waits for the attestation, up to 20 s, and is sent once more with the token. Before, it failed, and an install was only sent again at the next launch.
+### Added
+- `RocalyticsHttpError` (`/client`): the error a non-2xx answer rejects with, carrying `status` and the body's `error`. Its message is unchanged.
+- `getBinding(waitMs, { patient: true })` on the attest token manager: waits on an attestation another caller gave up on, and its own timeout marks nothing.
+
 ## [0.13.0] - 2026-11-25
 ### Changed
 - Attestation runs on `@expo/app-integrity`, now an optional peer dependency, instead of the `@rocapine/rocalytics-attest` package announced in 0.12.0, which is withdrawn and was never published. The client probes the binary for the `ExpoAppIntegrity` native module and never imports the package. Without it the client sends no attestation, as before. Set the App Attest entitlement (`com.apple.developer.devicecheck.appattest-environment`) in `app.json` yourself: there is no config plugin any more. The API contract is unchanged: the binding string is hashed the same way on both platforms (the Play Integrity request hash is now computed in JS with `expo-crypto`). The iOS key id is kept in the secure store.

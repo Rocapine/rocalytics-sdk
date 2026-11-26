@@ -28,6 +28,7 @@ export {
   buildPaywallPresentationRequest,
   buildTrackRequest,
   getEventId,
+  RocalyticsHttpError,
   rocalyticsHeaders,
   sendRocalyticsRequest,
   withAuthorization,

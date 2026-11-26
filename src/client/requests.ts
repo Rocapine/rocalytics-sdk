@@ -101,8 +101,8 @@ export function withAuthorization(request: RocalyticsRequest, token: string | nu
 }
 
 /**
- * Sends a request and resolves its response, or rejects with
- * `[ROCALYTICS] <endpoint> failed: <status>` (plus ` (<detail>)` when given)
+ * Sends a request and resolves its response, or rejects with a `RocalyticsHttpError`,
+ * `[ROCALYTICS] <endpoint> failed: <status>` (plus ` (<detail>)` when given),
  * when the status is not 2xx.
  */
 export async function sendRocalyticsRequest(
@@ -113,9 +113,23 @@ export async function sendRocalyticsRequest(
 ): Promise<FetchResponseLike> {
   const response = await fetch(request.url, request.init);
   if (!response.ok) {
-    throw new Error(`[ROCALYTICS] ${endpoint} failed: ${response.status}${detail ? ` (${detail})` : ""}`);
+    const body = (await response.json().catch(() => undefined)) as { error?: unknown } | undefined;
+    const error = typeof body?.error === "string" ? body.error : undefined;
+    throw new RocalyticsHttpError(`[ROCALYTICS] ${endpoint} failed: ${response.status}${detail ? ` (${detail})` : ""}`, response.status, error);
   }
   return response;
+}
+
+/** A non-2xx answer from rocalytics-api: its status, and the body's `error` when it has one. */
+export class RocalyticsHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly error: string | undefined,
+  ) {
+    super(message);
+    this.name = "RocalyticsHttpError";
+  }
 }
 
 /**
