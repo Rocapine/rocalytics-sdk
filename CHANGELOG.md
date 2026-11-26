@@ -7,6 +7,8 @@ The format follows Keep a Changelog, and the project follows Semantic Versioning
 Versions before 1.0.0 may include breaking changes in a minor release. Once 1.0.0 is released, the entries before it may be truncated from this file.
 
 ## [Unreleased]
+
+## [0.13.1] - 2026-11-26
 ### Changed
 - The `install` event waits up to 20 s (`INSTALL_ATTEST_WAIT_MS`) for the first attestation instead of `attest.waitMs`, even when `identify` already gave up on it, so a first launch sends an attested install. Start-up, and every request waiting on it, takes up to that much longer on a first launch with a slow attestation.
 - A request sent without a token and answered 401 `attestation_required` (an app in enforce) waits for the attestation, up to 20 s, and is sent once more with the token. Before, it failed, and an install was only sent again at the next launch.
