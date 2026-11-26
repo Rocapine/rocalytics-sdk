@@ -5,6 +5,7 @@ import {
   BACKOFF_MS,
   FLIGHT_DEADLINE_MS,
   RENEW_BEFORE_MS,
+  type AttestBinding,
   type AttestManagerOptions,
   type AttestProvider,
 } from "../src/core/attest";
@@ -599,6 +600,47 @@ describe("attest token manager", () => {
     expect(time.pendingTimers).toBe(0);
     expect(await m.getToken()).toBe(jwt(0));
     expect(calls).toHaveLength(2);
+  });
+
+  it("getBinding(ms, { patient: true }) waits on a flight another caller gave up on, and its own timeout abandons nothing", async () => {
+    const { fetch, calls } = scriptedFetch([challenge("c1"), token(jwt(0))]);
+    const p = iosProvider();
+    const hold = deferred<string>();
+    const attestKey = p.attestKey;
+    p.attestKey = (k, b) => (attestKey(k, b), hold.promise);
+    const m = manager(p, fetch);
+
+    let impatient: string | null | undefined;
+    void m.getToken(1000).then((v) => (impatient = v));
+    await time.advance(1000);
+    expect(impatient).toBeNull(); // gave up: the flight is abandoned
+
+    let patient: AttestBinding | null | undefined;
+    void m.getBinding(5000, { patient: true }).then((v) => (patient = v));
+    await time.advance(2000);
+    expect(patient).toBeUndefined(); // still waiting on the abandoned flight
+    hold.resolve("ATT");
+    await flushMicrotasks();
+    expect(patient?.token).toBe(jwt(0));
+    expect(calls).toHaveLength(2);
+  });
+
+  it("a patient caller that times out leaves the flight joinable", async () => {
+    const { fetch } = scriptedFetch([challenge("c1"), token(jwt(1))]);
+    const p = iosProvider();
+    const hold = deferred<string>();
+    const attestKey = p.attestKey;
+    p.attestKey = (k, b) => (attestKey(k, b), hold.promise);
+    const m = manager(p, fetch);
+    let timedOut: AttestBinding | null | undefined;
+    void m.getBinding(1000, { patient: true }).then((v) => (timedOut = v));
+    await time.advance(1000);
+    expect(timedOut).toBeNull();
+    let next: string | null | undefined;
+    void m.getToken(3000).then((v) => (next = v));
+    hold.resolve("ATT");
+    await flushMicrotasks();
+    expect(next).toBe(jwt(1));
   });
 
   it("a flight that never settles → backoff after FLIGHT_DEADLINE_MS, then a new flight; the hung flight's late result is ignored", async () => {

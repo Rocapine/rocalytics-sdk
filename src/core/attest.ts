@@ -140,8 +140,12 @@ export interface AttestBinding {
 export interface AttestTokenManager {
   /** A token valid for the current app, platform and roca id, or null. Resolves within `waitMs` (default 3000). Never throws. */
   getToken(waitMs?: number): Promise<string | null>;
-  /** `getToken`, with the app id, platform and roca id the token is bound to. */
-  getBinding(waitMs?: number): Promise<AttestBinding | null>;
+  /**
+   * `getToken`, with the app id, platform and roca id the token is bound to.
+   * A caller that times out marks the attestation in flight as given up on, and later callers return null at once
+   * instead of waiting on it; with `patient`, the caller waits on it anyway, and its own timeout marks nothing.
+   */
+  getBinding(waitMs?: number, options?: { patient?: boolean }): Promise<AttestBinding | null>;
   state(): AttestState;
 }
 
@@ -153,6 +157,11 @@ export const FLIGHT_DEADLINE_MS = 30_000;
 
 /** How long a request waits for a token when `attest.waitMs` is not set. */
 export const DEFAULT_ATTEST_WAIT_MS = 3000;
+/**
+ * How long the `install` event, and the second send after a 401 attestation_required, wait for a token: long enough
+ * for a first attestation (key, challenge, Apple or Google, POST /attest), shorter than FLIGHT_DEADLINE_MS.
+ */
+export const INSTALL_ATTEST_WAIT_MS = 20_000;
 /** The API's token lifetime (`exp = iat + 86400`): the bound for a token whose own lifetime can't be read. */
 const MAX_LIFETIME_S = 86400;
 
@@ -439,7 +448,7 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
   const bound = (token: string, rocaId: string): AttestBinding => ({ token, app_id: appId, platform, roca_id: rocaId });
 
   /** `wait.flight`: the flight this call is waiting on, which its getBinding marks abandoned if it times out first. */
-  const obtain = async (wait: { flight: Flight | null }): Promise<AttestBinding | null> => {
+  const obtain = async (wait: { flight: Flight | null }, patient: boolean): Promise<AttestBinding | null> => {
     await load();
     const rocaId = options.getRocaId();
     if (rocaId === null || terminal) return null;
@@ -449,13 +458,13 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
       return bound(cached.token, cached.roca_id);
     }
     // A caller already gave up on this flight: nobody waits on it again.
-    if (flight?.abandoned) return null;
+    if (flight?.abandoned && !patient) return null;
     if (flight && flight.rocaId !== rocaId) {
       // A flight for another roca id: its token is not ours. Wait for it, then decide again.
       wait.flight = flight;
       await flight.promise;
       wait.flight = null;
-      return obtain(wait);
+      return obtain(wait, patient);
     }
     const f = flight ?? (inBackoff() ? null : startFlight(rocaId, false));
     if (!f) return null;
@@ -464,7 +473,7 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
     return token !== null && options.getRocaId() === f.rocaId ? bound(token, f.rocaId) : null;
   };
 
-  const getBinding = (waitMs = DEFAULT_ATTEST_WAIT_MS): Promise<AttestBinding | null> =>
+  const getBinding = (waitMs = DEFAULT_ATTEST_WAIT_MS, opts?: { patient?: boolean }): Promise<AttestBinding | null> =>
     new Promise<AttestBinding | null>((resolve) => {
       let settled = false;
       let handle: unknown;
@@ -481,10 +490,10 @@ export function createAttestTokenManager(options: AttestManagerOptions): AttestT
       };
       try {
         handle = timers.setTimeout(() => {
-          if (!settled && wait.flight) wait.flight.abandoned = true;
+          if (!settled && wait.flight && !opts?.patient) wait.flight.abandoned = true;
           finish(null);
         }, waitMs);
-        obtain(wait).then(finish, () => finish(null));
+        obtain(wait, opts?.patient === true).then(finish, () => finish(null));
       } catch {
         finish(null);
       }
